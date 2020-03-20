@@ -38,7 +38,8 @@ import Control.Lens  ( Lens', lens )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, logMessage, runLoggingT )
+import Control.Monad.Log  ( MonadLog, Severity( Informational )
+                          , WithSeverity( WithSeverity ), logInfo, runLoggingT )
 
 -- monadio-plus ------------------------
 
@@ -136,9 +137,9 @@ class HasIOClass α where
 data Mock = DoMock | NoMock
   deriving (Eq,Show)
 
-mkIO ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ, HasIOClass τ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
+mkIO ∷ ∀ ω τ μ . (MonadIO μ, MonadLog (WithSeverity τ) μ, HasIOClass τ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
 mkIO log mock_value io mock = do
-  logMessage (log mock)
+  logInfo (log mock)
   case mock of
     NoMock → liftIO io
     DoMock → return mock_value
@@ -161,7 +162,7 @@ instance HasIOClass SimpleLogEntry where
   ioClass = lens (\ (SimpleLogEntry (c,_)) → c)
                  (\ (SimpleLogEntry (_,t)) c → SimpleLogEntry (c,t))
 
-type SimpleLog = DList SimpleLogEntry
+type SimpleLog = DList (WithSeverity SimpleLogEntry)
 
 withResource2 ∷ IO α → (α → IO()) → IO β → (β → IO ()) → (IO α → IO β →TestTree)
               → TestTree
@@ -175,7 +176,6 @@ withResource2' gain gain' tests =
 
 myTests ∷ TestTree
 myTests =
--- XXX add severity
 -- XXX pureLoggingT
   let readFn ∷ (MonadIO μ, MonadWriter SimpleLog μ) ⇒ FilePath → μ Text
       readFn fn = runLoggingT (mkIO (const $ SimpleLogEntry (IORead, "Hello"))
@@ -183,7 +183,7 @@ myTests =
                               (tell ∘ singleton)
    in withResource2' (runWriterT $ readFn "/etc/subgid") (readFile "/etc/subgid") $ \ txtlog exptxt → 
         testGroup "my" [ testCase "txt" $ txtlog ≫ \ (txt,log) → exptxt ≫ \ exp → exp ≟ txt
-                       , testCase "log" $ txtlog ≫ \ (txt,log) → [SimpleLogEntry (IORead,"Hello")] @=? log
+                       , testCase "log" $ txtlog ≫ \ (txt,log) → [WithSeverity Informational (SimpleLogEntry (IORead,"Hello"))] @=? log
                  ]
 
 
