@@ -24,13 +24,9 @@ import Text.Show            ( Show )
 
 import Data.Function.Unicode  ( (∘) )
 
--- data-textual ------------------------
-
-import Data.Textual  ( Printable( print ) )
-
 -- dlist -------------------------------
 
-import Data.DList  ( DList, singleton )
+import Data.DList  ( DList )
 
 -- lens --------------------------------
 
@@ -39,7 +35,9 @@ import Control.Lens  ( Lens', lens )
 -- logging-effect ----------------------
 
 import Control.Monad.Log  ( MonadLog, Severity( Informational )
-                          , WithSeverity( WithSeverity ), logInfo, runLoggingT )
+                          , WithSeverity( WithSeverity )
+                          , logMessage, runLoggingT, runPureLoggingT
+                          )
 
 -- monadio-plus ------------------------
 
@@ -47,7 +45,6 @@ import MonadIO  ( MonadIO, liftIO )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Monad    ( (≫) )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- mtl ---------------------------------
@@ -67,7 +64,7 @@ import Test.Tasty  ( TestTree, testGroup, withResource )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( (@=?), assertFailure, testCase )
+import Test.Tasty.HUnit  ( (@=?), testCase )
 
 -- tasty-plus --------------------------
 
@@ -137,12 +134,22 @@ class HasIOClass α where
 data Mock = DoMock | NoMock
   deriving (Eq,Show)
 
-mkIO ∷ ∀ ω τ μ . (MonadIO μ, MonadLog (WithSeverity τ) μ, HasIOClass τ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
+mkIO ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
 mkIO log mock_value io mock = do
-  logInfo (log mock)
+  logMessage (log mock)
   case mock of
     NoMock → liftIO io
     DoMock → return mock_value
+
+_mkIO ∷ ∀ ω τ μ . (MonadIO μ, MonadLog (DList τ) μ) ⇒ (Mock → DList τ) → ω → IO ω → Mock → μ ω
+_mkIO log mock_value io mock = do
+  logMessage (log mock)
+  case mock of
+    NoMock → liftIO io
+    DoMock → return mock_value
+
+-- instance Semigroup (WithSeverity (SimpleLogEntry)) where
+-- instance Monoid (WithSeverity (SimpleLogEntry)) where
 
 -- derive:
 --    -) A general function to establish whether to mock
@@ -162,7 +169,7 @@ instance HasIOClass SimpleLogEntry where
   ioClass = lens (\ (SimpleLogEntry (c,_)) → c)
                  (\ (SimpleLogEntry (_,t)) c → SimpleLogEntry (c,t))
 
-type SimpleLog = DList (WithSeverity SimpleLogEntry)
+type SimpleLog = DList SimpleLogEntry
 
 withResource2 ∷ IO α → (α → IO()) → IO β → (β → IO ()) → (IO α → IO β →TestTree)
               → TestTree
@@ -171,29 +178,70 @@ withResource2 gain lose gain' lose' tests =
 
 withResource2' ∷ IO α → IO β → (IO α → IO β → TestTree)
               → TestTree
-withResource2' gain gain' tests =
-  withResource' gain (\ x → withResource' gain' (\ x' → tests x x'))
+withResource2' gain gain' ts =
+  withResource' gain (\ x → withResource' gain' (\ x' → ts x x'))
 
-myTests ∷ TestTree
-myTests =
--- XXX pureLoggingT
-  let readFn ∷ (MonadIO μ, MonadWriter SimpleLog μ) ⇒ FilePath → μ Text
-      readFn fn = runLoggingT (mkIO (const $ SimpleLogEntry (IORead, "Hello"))
-                                    "mockety" (readFile fn) NoMock)
-                              (tell ∘ singleton)
-   in withResource2' (runWriterT $ readFn "/etc/subgid") (readFile "/etc/subgid") $ \ txtlog exptxt → 
-        testGroup "my" [ testCase "txt" $ txtlog ≫ \ (txt,log) → exptxt ≫ \ exp → exp ≟ txt
-                       , testCase "log" $ txtlog ≫ \ (txt,log) → [WithSeverity Informational (SimpleLogEntry (IORead,"Hello"))] @=? log
-                 ]
+writerMonadTests ∷ TestTree
+writerMonadTests =
+  let helloEntry = [ SimpleLogEntry(IORead,"Hello") ]
+      readFn ∷ (MonadIO μ, MonadWriter SimpleLog μ) ⇒ FilePath → Mock → μ Text
+      readFn fn mock = runLoggingT (mkIO (const helloEntry) "mockety"
+                                         (readFile fn) mock) tell
+   in testGroup "writerMonad"
+                [ withResource2' (runWriterT $ readFn "/etc/subgid" NoMock)
+                                 (readFile "/etc/subgid") $ \ txtlog exptxt →
+                    testGroup "NoMock"
+                              [ testCase "txt" $ do (txt,_) ← txtlog
+                                                    exp ← exptxt
+                                                    exp ≟ txt
+                              , testCase "log" $ do (_,log) ← txtlog
+                                                    helloEntry @=? log
+                              ]
+                , withResource' (runWriterT $ readFn "/etc/subgid" DoMock) $
+                    \ txtlog →
+                    testGroup "DoMock"
+                              [ testCase "txt" $ do (txt,_) ← txtlog
+                                                    "mockety" ≟ txt
+                              , testCase "log" $ do (_,log) ← txtlog
+                                                    helloEntry @=? log
+                              ]
+                ]
 
+pureLoggingTests ∷ TestTree
+pureLoggingTests =
+  let helloEntry = [ SimpleLogEntry(IORead,"Hello") ]
+      readFn' ∷ (MonadIO μ) ⇒ FilePath → Mock → μ (Text, DList SimpleLogEntry)
+      readFn' fn mock = runPureLoggingT (_mkIO (const helloEntry) "mockety"
+                                        (readFile fn) mock)
+   in testGroup "pureLogging"
+                [ withResource2' (readFn' "/etc/subgid" NoMock)
+                     (readFile "/etc/subgid") $ \ txtlog exptxt →
+                    testGroup "NoMock"
+                              [ testCase "txt" $ do (txt,_) ← txtlog
+                                                    exp ← exptxt
+                                                    exp ≟ txt
+                              , testCase "log" $ do (_,log) ← txtlog
+                                                    helloEntry @=? log
+                              ]
+                , withResource' (readFn' "/etc/subgid" DoMock) $ \ txtlog →
+                    testGroup "DoMock"
+                              [ testCase "txt" $ do (txt,_) ← txtlog
+                                                    "mockety" ≟ txt
+                              , testCase "log" $ do (_,log) ← txtlog
+                                                    helloEntry @=? log
+                              ]
+                ]
+
+-- XXX simplify logging
+-- XXX simple functions for severity
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
-tests = testGroup "AbsPath" [ myTests ]
-                
+tests = testGroup "MockIO" [ writerMonadTests, pureLoggingTests ]
+
 ----------------------------------------
 
 _test ∷ IO ExitCode
