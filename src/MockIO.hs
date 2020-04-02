@@ -61,8 +61,8 @@ import qualified  Control.Monad.Log
 import Control.Monad.Log  ( MonadLog, Severity( Error, Informational )
                           , WithSeverity( WithSeverity )
                           , defaultBatchingOptions, logMessage, timestamp
-                          , renderWithSeverity, renderWithTimestamp, runLoggingT
-                          , runPureLoggingT, withFDHandler
+                          , renderWithSeverity, runLoggingT, runPureLoggingT
+                          , withFDHandler
                           )
 
 -- monadio-plus ------------------------
@@ -381,7 +381,7 @@ prettyCallStack (root:rest) =
           pretty (LT.pack f) ⊕ ", called at " ⊕
           pretty (LT.pack (GHC.Stack.prettySrcLoc loc))
 
--- renderWithCallStack :: (a -> Doc ann) -> WithCallStack a -> Doc ann
+-- renderWithCallStack ∷ (a -> Doc ann) -> WithCallStack a -> Doc ann
 renderWithCallStack f m =
   f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ callStack m))
 
@@ -401,14 +401,25 @@ renderWithSeverity (Main.renderWithCallStack id)
 
 -}
 
+class HasUTCTime α where
+  utcTime ∷ Lens' α UTCTime
+
+instance HasUTCTime UTCTime where
+  utcTime = id
+
 class HasSeverity α where
   severity ∷ Lens' α Severity
 
 instance HasSeverity Severity where
   severity = id
 
+infixr 5 ⊞
+-- hsep
+(⊞) ∷ Doc α → Doc α → Doc α
+(⊞) = (<+>)
+
 -- renderWithSeverity :: (a -> PP.Doc ann) -> (WithSeverity a -> PP.Doc ann)
-renderWithSeverity' f m = brackets (pretty $ m ⊣ severity) <+> align (f m)
+renderWithSeverity' f m = brackets (pretty $ m ⊣ severity) ⊞ align (f m)
 
 
 {- | Log with timestamp, callstack, severity & IOClass -}
@@ -426,6 +437,10 @@ instance WithCallStack (Lg β) where
 instance HasSeverity (Lg α) where
   severity = lens (\ (Lg (_,_,sv,_,_)) → sv)
                   (\ (Lg (cs,tm,_,txt,a)) sv → Lg (cs,tm,sv,txt,a))
+
+instance HasUTCTime (Lg α) where
+  utcTime = lens (\ (Lg (_,tm,_,_,_)) → tm)
+                 (\ (Lg (cs,_,sv,txt,a)) tm → Lg (cs,tm,sv,txt,a))
 
 instance Pretty (Lg α) where
   pretty (Lg (_,_,_,txt,_)) = pretty txt
@@ -475,6 +490,33 @@ renderTests =
             , "                    bob', called at src/MockIO.hs:477:123 in main:Main"
             ]
    in testGroup "render" $ assertListEqIO "render" exp (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
+
+renderLogWithoutTimeStamp ∷ Lg () → Doc ()
+renderLogWithoutTimeStamp = renderWithSeverity' $ renderWithCallStack pretty
+
+renderLog ∷ Lg () → Doc ()
+renderLog = renderWithTimestamp ∘ renderWithSeverity' $ renderWithCallStack pretty
+
+{-
+renderWithTimestamp ∷ (UTCTime → String)
+                       -- ^ How to format the timestamp.
+                    → (a → PP.Doc ann)
+                       -- ^ How to render the rest of the message.
+                    → (WithTimestamp a → PP.Doc ann)
+-}
+-- Add this to tfmt?
+{- | Format a UTCTime, in almost-ISO8601-without-fractional-seconds (always in Zulu). -}
+formatUTC ∷ UTCTime → Text
+formatUTC = pack ∘ formatTime defaultTimeLocale "%FZ%T"
+
+{- | Format a UTCTime, in ISO8601-without-fractional-seconds (always in Zulu),
+     with a leading 3-letter day-of-week -}
+formatUTCDoW ∷ UTCTime → Text
+formatUTCDoW = pack ∘ formatTime defaultTimeLocale "%a %FZ%T"
+
+
+renderWithTimestamp f m =
+  brackets (pretty (formatUTCDoW $ m ⊣ utcTime)) ⊞ align (f m)
 
 withResource2 ∷ IO α → (α → IO()) → IO β → (β → IO ()) → (IO α → IO β →TestTree)
               → TestTree
@@ -606,7 +648,7 @@ logMsgTests =
 data WithAttr β α = WithAttr { attr ∷ β, datum ∷ α }
   deriving (Eq,Functor,Show)
 
-testApp :: MonadLog (WithSeverity (Doc ann)) m => m ()
+testApp ∷ MonadLog (WithSeverity (Doc ann)) m => m ()
 testApp = do
   logMessage (WithSeverity Informational "Don't mind me")
   logMessage (WithSeverity Error "But do mind me!")
