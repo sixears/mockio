@@ -58,7 +58,7 @@ import Control.Lens  ( Lens', lens )
 -- logging-effect ----------------------
 
 import qualified  Control.Monad.Log
-import Control.Monad.Log  ( MonadLog, Severity( Error, Informational )
+import Control.Monad.Log  ( MonadLog, Severity(..)
                           , WithSeverity( WithSeverity )
                           , defaultBatchingOptions, logMessage, timestamp
                           , renderWithSeverity, runLoggingT, runPureLoggingT
@@ -419,7 +419,17 @@ infixr 5 ⊞
 (⊞) = (<+>)
 
 -- renderWithSeverity :: (a -> PP.Doc ann) -> (WithSeverity a -> PP.Doc ann)
-renderWithSeverity' f m = brackets (pretty $ m ⊣ severity) ⊞ align (f m)
+renderWithSeverity' f m =
+  let pp ∷ HasSeverity α ⇒ α → Doc ann
+      pp sv = pretty $ case sv ⊣ severity of
+                         Emergency     → ("EMERG" ∷ Text)
+                         Alert         → "ALERT"
+                         Critical      → "CRIT "
+                         Warning       → "Warn "
+                         Notice        → "Note "
+                         Informational → "Info "
+                         Debug         → "Debug"
+   in brackets (pp m) ⊞ align (f m)
 
 
 {- | Log with timestamp, callstack, severity & IOClass -}
@@ -485,9 +495,9 @@ assertListEqIO = assertListEqIO' toText
 
 renderTests ∷ TestTree
 renderTests =
-  let exp = [ "[Informational] bob'"
-            , "                  lg, called at src/MockIO.hs:439:43 in main:Main"
-            , "                    bob', called at src/MockIO.hs:477:123 in main:Main"
+  let exp = [ "[Info ] bob'"
+            , "          lg, called at src/MockIO.hs:464:43 in main:Main"
+            , "            bob', called at src/MockIO.hs:502:123 in main:Main"
             ]
    in testGroup "render" $ assertListEqIO "render" exp (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
 
