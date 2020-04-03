@@ -137,6 +137,38 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 --------------------------------------------------------------------------------
 
+-- Placed at the top to reduce line movements messing up the tests
+logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ (Lg ())
+logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,())
+
+bob' ∷ (?stack ∷ CallStack) ⇒ IO (Lg())
+bob' = let -- stack = GHC.Stack.callStack
+           -- add an additional callstack to test the formatting
+           mybob ∷ (?stack ∷ CallStack) ⇒ IO (Lg())
+--           mybob ∷ HasCallStack ⇒ IO (Lg())
+           mybob = logIO Informational "bob'"
+        in mybob -- lg Informational "bob'"
+
+renderTests ∷ TestTree
+renderTests =
+  let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
+      exp1 = [ "[Info ] bob'"
+             , "          logIO, called at src/MockIO.hs:149:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:150:12 in main:Main"
+             , "            bob', called at src/MockIO.hs:167:110 in main:Main"
+             ]
+      exp2 = [ "[Info ] bob'"
+             , "          logIO, called at src/MockIO.hs:149:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:150:12 in main:Main"
+             , "            bob', called at src/MockIO.hs:169:114 in main:Main"
+             , "            foo, called at c:1:2 in a:b"
+             ]
+   in testGroup "render" $
+        ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
+          , let ?stack = c
+             in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
+          ]
+
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
                        ReaderT (ProcExecCtxt η) (Stream (Of ProcIOAction) η) ω }
@@ -455,13 +487,7 @@ instance HasUTCTime (Lg α) where
 instance Pretty (Lg α) where
   pretty (Lg (_,_,_,txt,_)) = pretty txt
 
-lg ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ (Lg ())
-lg sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,())
-
 bob = withCallStack @(CallStack,Text) "bob"
-
-bob' ∷ (?stack ∷ CallStack) ⇒ IO (Lg())
-bob' = let stack = GHC.Stack.callStack in lg Informational "bob'"
 
 assertEq' ∷ (Eq t) ⇒ (t → Text) → t → t → Assertion
 assertEq' toT expected got =
@@ -492,14 +518,6 @@ assertListEqIO' toT name (toList → expect) (fmap toList → got) =
 assertListEqIO ∷ (Foldable ψ, Foldable φ, Eq α, Printable α) ⇒
                 Text → ψ α → IO (φ α) → [TestTree]
 assertListEqIO = assertListEqIO' toText
-
-renderTests ∷ TestTree
-renderTests =
-  let exp = [ "[Info ] bob'"
-            , "          lg, called at src/MockIO.hs:464:43 in main:Main"
-            , "            bob', called at src/MockIO.hs:502:123 in main:Main"
-            ]
-   in testGroup "render" $ assertListEqIO "render" exp (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
 
 renderLogWithoutTimeStamp ∷ Lg () → Doc ()
 renderLogWithoutTimeStamp = renderWithSeverity' $ renderWithCallStack pretty
