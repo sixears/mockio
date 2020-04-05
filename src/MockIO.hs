@@ -16,6 +16,7 @@ import qualified  GHC.Stack
 import Data.Bool            ( Bool( False, True ), not, otherwise )
 import Control.Applicative  ( Applicative, (<*>), pure )
 import Control.Monad        ( Monad, (>>=), mapM, return )
+import Control.Monad.Catch  ( MonadMask )
 import Control.Monad.Identity  ( runIdentity )
 import Data.Eq              ( Eq )
 import Data.Foldable        ( Foldable, toList )
@@ -27,8 +28,8 @@ import Data.Monoid          ( Monoid )
 import Data.String          ( String, lines, unlines )
 import Data.Tuple           ( fst, snd )
 import GHC.Exts             ( fromList )
-import GHC.Stack            ( CallStack, HasCallStack, SrcLoc
-                            , getCallStack, popCallStack)
+import GHC.Stack            ( CallStack, HasCallStack, SrcLoc, getCallStack
+                            , popCallStack, srcLocFile, srcLocStartLine )
 import System.Exit          ( ExitCode )
 import System.IO            ( FilePath, IO, stderr )
 import Text.Show            ( Show( show ) )
@@ -53,7 +54,7 @@ import Fluffy.Foldable  ( length )
 
 -- lens --------------------------------
 
-import Control.Lens  ( Lens', lens )
+import Control.Lens  ( Lens', lens, view )
 
 -- logging-effect ----------------------
 
@@ -89,14 +90,14 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 
 import Data.Text.Prettyprint.Doc  ( Doc, Pretty, SimpleDocStream(..)
                                   , (<+>), align, annotate, brackets
-                                  , defaultLayoutOptions, hsep, indent
+                                  , defaultLayoutOptions, enclose, hsep, indent
                                   , layoutPretty, line, pretty, space, vsep
                                   )
 import Data.Text.Prettyprint.Doc.Render.Util.Panic
 
 -- safe --------------------------------
 
-import Safe  ( atMay )
+import Safe  ( atMay, headMay )
 
 -- streaming ---------------------------
 
@@ -137,37 +138,65 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 --------------------------------------------------------------------------------
 
+-- Lg→LogEntry; log to Log; use logMessage in logIO; logIO'→logIO; 
+-- add logIO' to carry arbitrary data; same for log & log'
+-- add simple logging (without io); different brackets for severity & timestamp
+-- tighten up naming; split out mocking & logging
+-- split out stacktrace tests
+-- clearer mock logging (e.g. (CMD) vs [CMD])
+-- cmd logging using showcmdforuser
+
 -- Placed at the top to reduce line movements messing up the tests
-logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ (Lg ())
+logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
 logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,())
 
-bob' ∷ (?stack ∷ CallStack) ⇒ IO (Lg())
+bob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
+bob = let -- stack = GHC.Stack.callStack
+           -- add an additional callstack to test the formatting
+           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
+--           mybob ∷ HasCallStack ⇒ IO LogEntry
+           mybob = logIO Informational "bob"
+        in mybob -- lg Informational "bob"
+
+bob' ∷ (MonadIO μ, MonadLog LogEntry μ, ?stack ∷ CallStack) ⇒ μ ()
 bob' = let -- stack = GHC.Stack.callStack
            -- add an additional callstack to test the formatting
-           mybob ∷ (?stack ∷ CallStack) ⇒ IO (Lg())
---           mybob ∷ HasCallStack ⇒ IO (Lg())
-           mybob = logIO Informational "bob'"
-        in mybob -- lg Informational "bob'"
+--           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
+           mybob' ∷ (MonadIO μ, MonadLog LogEntry μ, HasCallStack) ⇒ μ ()
+           mybob' = logIO' Informational "bob'"
+        in mybob' -- lg Informational "bob"
+
+
+
 
 renderTests ∷ TestTree
 renderTests =
   let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
-      exp1 = [ "[Info ] bob'"
-             , "          logIO, called at src/MockIO.hs:149:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:150:12 in main:Main"
-             , "            bob', called at src/MockIO.hs:167:110 in main:Main"
+      exp1 = [ "[Info ] bob"
+             , "          logIO, called at src/MockIO.hs:158:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:159:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:189:110 in main:Main"
              ]
-      exp2 = [ "[Info ] bob'"
-             , "          logIO, called at src/MockIO.hs:149:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:150:12 in main:Main"
-             , "            bob', called at src/MockIO.hs:169:114 in main:Main"
+      exp2 = [ "[Info ] bob"
+             , "          logIO, called at src/MockIO.hs:158:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:159:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:191:114 in main:Main"
              , "            foo, called at c:1:2 in a:b"
              ]
+      exp3 = [ "[Info ] «src/MockIO.hs#158» bob"
+             ]
    in testGroup "render" $
-        ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
+        ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
           , let ?stack = c
-             in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob')
+             in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
+          , assertListEqIO "renderHead" exp3 (lines ∘ show ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ bob)
           ]
+
+logIO' ∷ (MonadIO μ, MonadLog LogEntry μ, ?stack ∷ CallStack) ⇒
+         Severity → Text → μ ()
+logIO' sv txt = do
+  tm ← liftIO getCurrentTime
+  logMessage $ withCallStack (txt,tm,sv,())
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
@@ -320,6 +349,14 @@ filterDocTests =
 logit ∷ IO ()
 logit = (\io -> withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg -> runLoggingT io (lg ∘ renderWithSeverity id))) (Control.Monad.Log.logInfo "mary had a little lamb")
 
+logit' ∷ (MonadIO μ, MonadMask μ) ⇒ μ ()
+logit' = (\io->withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg->runLoggingT io (lg ∘ renderLog))) (logIO Informational "log this" >>= logMessage )
+logit'' ∷ (MonadIO μ, MonadMask μ) ⇒ μ ()
+logit'' = (\io->withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg->runLoggingT io (lg ∘ renderLog'))) (logIO Informational "log this" >>= logMessage )
+-- [Sat 2020-04-04Z06:37:49] [Info ] log this
+--                                    logIO, called at <interactive>:375:99 in interactive:Ghci10
+
+
 -- logit' ∷ IO ()
 -- logit' = (\io -> withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg -> runLoggingT io (lg ∘ renderWithTimestamp (formatTime defaultTimeLocale rfc822DateFormat) ∘ renderWithSeverity id))) (timestamp $ Control.Monad.Log.logInfo "mary had a little lamb")
 
@@ -369,41 +406,52 @@ withCallStack :: (?stack :: CallStack) => a -> WithCallStack a
 withCallStack = WithCallStack ?stack
 -}
 
+{- | Note the awkward capitalization, to avoid clashing with
+     `GHC.Stack.HasCallStack` -}
+class HasCallstack α where
+  callStack' ∷ Lens' α CallStack
+
+instance HasCallstack CallStack where
+  callStack' = id
+
+csHead ∷ HasCallstack α ⇒ α → Maybe (String,SrcLoc)
+csHead = headMay ∘ getCallStack ∘ view callStack'
+
 class WithCallStack ω where
   type CSElement ω
   withCallStack ∷ (?stack ∷ CallStack, HasCallStack) ⇒ CSElement ω → ω
   csDiscard ∷ ω -> CSElement ω
-  callStack ∷ ω → CallStack
+  _callStack_ ∷ ω → CallStack
 
 instance WithCallStack CallStack where
   type CSElement CallStack = ()
   withCallStack () = ?stack
   csDiscard _ = ()
-  callStack w = w
+  _callStack_ w = w
 
 instance WithCallStack (Control.Monad.Log.WithCallStack α) where
   type CSElement (Control.Monad.Log.WithCallStack α) = α
   withCallStack = Control.Monad.Log.withCallStack
   csDiscard w = Control.Monad.Log.discardCallStack w
-  callStack w = Control.Monad.Log.msgCallStack w
+  _callStack_ w = Control.Monad.Log.msgCallStack w
 
 instance WithCallStack (CallStack, α) where
   type CSElement (CallStack, α) = α
   withCallStack = (?stack,)
   csDiscard = snd
-  callStack = fst
+  _callStack_ = fst
 
 instance WithCallStack (CallStack, α, β) where
   type CSElement (CallStack,α,β) = (α,β)
   withCallStack (a,b) = (?stack,a,b)
   csDiscard (_,a,b)   = (a,b)
-  callStack (cs,_,_)  = cs
+  _callStack_ (cs,_,_)  = cs
 
 instance WithCallStack (CallStack, α, β, γ) where
   type CSElement (CallStack,α,β,γ) = (α,β,γ)
   withCallStack (a,b,c) = (?stack,a,b,c)
   csDiscard (_,a,b,c)   = (a,b,c)
-  callStack (cs,_,_,_)  = cs
+  _callStack_ (cs,_,_,_)  = cs
 
 prettyCallStack ∷ [(String,SrcLoc)] → Doc ann
 prettyCallStack [] = "empty callstack"
@@ -413,9 +461,16 @@ prettyCallStack (root:rest) =
           pretty (LT.pack f) ⊕ ", called at " ⊕
           pretty (LT.pack (GHC.Stack.prettySrcLoc loc))
 
--- renderWithCallStack ∷ (a -> Doc ann) -> WithCallStack a -> Doc ann
+renderWithCallStack ∷ HasCallstack δ ⇒ (δ -> Doc ρ) -> δ -> Doc ρ
 renderWithCallStack f m =
-  f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ callStack m))
+  f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ m ⊣ callStack'))
+
+renderWithStackHead ∷ HasCallstack δ ⇒ (δ -> Doc ρ) -> δ -> Doc ρ
+renderWithStackHead f m =
+  let renderStackHead (Just (_,loc)) = pretty $ srcLocFile loc ⊕ "#" ⊕ show (srcLocStartLine loc)
+  
+--  f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ _callStack_ m))
+   in enclose "«" "»" (renderStackHead $ csHead m)  ⊞ align (f m)
 
 {-
 λ> :t renderWithSeverity' (Main.renderWithCallStack pretty)
@@ -450,7 +505,7 @@ infixr 5 ⊞
 (⊞) ∷ Doc α → Doc α → Doc α
 (⊞) = (<+>)
 
--- renderWithSeverity :: (a -> PP.Doc ann) -> (WithSeverity a -> PP.Doc ann)
+renderWithSeverity' ∷ HasSeverity τ ⇒ (τ → Doc ρ) → τ → Doc ρ
 renderWithSeverity' f m =
   let pp ∷ HasSeverity α ⇒ α → Doc ann
       pp sv = pretty $ case sv ⊣ severity of
@@ -465,29 +520,37 @@ renderWithSeverity' f m =
 
 
 {- | Log with timestamp, callstack, severity & IOClass -}
-data Lg α = Lg { unLg ∷ (CallStack, UTCTime, Severity, Text, α) }
+data LogEntry' α = LogEntry' { unLogEntry' ∷ (CallStack, UTCTime, Severity, Text, α) }
   deriving Show
 -- data LogCSTS
+type LogEntry = LogEntry' ()
 
-instance WithCallStack (Lg β) where
-  type CSElement (Lg β) = (Text,UTCTime,Severity,β)
-  withCallStack (txt,tm,sv,b) = Lg (popCallStack ?stack,tm,sv,txt,b)
+newtype Log' α = DList (LogEntry' α)
+type Log = Log' ()
+
+instance WithCallStack (LogEntry' β) where
+  type CSElement (LogEntry' β) = (Text,UTCTime,Severity,β)
+  withCallStack (txt,tm,sv,b) = LogEntry' (popCallStack ?stack,tm,sv,txt,b)
   {-# INLINE withCallStack #-}
-  csDiscard (Lg (_,tm,sv,txt,b))   = (txt,tm,sv,b)
-  callStack (Lg (cs,_,_,_,_))  = cs
+  csDiscard (LogEntry' (_,tm,sv,txt,b))   = (txt,tm,sv,b)
+  _callStack_ (LogEntry' (cs,_,_,_,_))  = cs
 
-instance HasSeverity (Lg α) where
-  severity = lens (\ (Lg (_,_,sv,_,_)) → sv)
-                  (\ (Lg (cs,tm,_,txt,a)) sv → Lg (cs,tm,sv,txt,a))
+instance HasCallstack (LogEntry' β) where
+  callStack' = lens (\ (LogEntry' (cs,_,_,_,_)) → cs)
+                    (\ (LogEntry' (_,tm,sv,txt,a)) cs → LogEntry' (cs,tm,sv,txt,a))
 
-instance HasUTCTime (Lg α) where
-  utcTime = lens (\ (Lg (_,tm,_,_,_)) → tm)
-                 (\ (Lg (cs,_,sv,txt,a)) tm → Lg (cs,tm,sv,txt,a))
+instance HasSeverity (LogEntry' α) where
+  severity = lens (\ (LogEntry' (_,_,sv,_,_)) → sv)
+                  (\ (LogEntry' (cs,tm,_,txt,a)) sv → LogEntry' (cs,tm,sv,txt,a))
 
-instance Pretty (Lg α) where
-  pretty (Lg (_,_,_,txt,_)) = pretty txt
+instance HasUTCTime (LogEntry' α) where
+  utcTime = lens (\ (LogEntry' (_,tm,_,_,_)) → tm)
+                 (\ (LogEntry' (cs,_,sv,txt,a)) tm → LogEntry' (cs,tm,sv,txt,a))
 
-bob = withCallStack @(CallStack,Text) "bob"
+instance Pretty (LogEntry' α) where
+  pretty (LogEntry' (_,_,_,txt,_)) = pretty txt
+
+-- bob = withCallStack @(CallStack,Text) "bob"
 
 assertEq' ∷ (Eq t) ⇒ (t → Text) → t → t → Assertion
 assertEq' toT expected got =
@@ -519,11 +582,14 @@ assertListEqIO ∷ (Foldable ψ, Foldable φ, Eq α, Printable α) ⇒
                 Text → ψ α → IO (φ α) → [TestTree]
 assertListEqIO = assertListEqIO' toText
 
-renderLogWithoutTimeStamp ∷ Lg () → Doc ()
+renderLogWithoutTimeStamp ∷ LogEntry → Doc ()
 renderLogWithoutTimeStamp = renderWithSeverity' $ renderWithCallStack pretty
 
-renderLog ∷ Lg () → Doc ()
+renderLog ∷ LogEntry → Doc ()
 renderLog = renderWithTimestamp ∘ renderWithSeverity' $ renderWithCallStack pretty
+
+renderLog' ∷ LogEntry → Doc ()
+renderLog' = renderWithTimestamp ∘ renderWithSeverity' $ renderWithStackHead pretty
 
 {-
 renderWithTimestamp ∷ (UTCTime → String)
