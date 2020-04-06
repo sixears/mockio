@@ -1,13 +1,14 @@
-{-# LANGUAGE DeriveFunctor     #-}
-{-# LANGUAGE ImplicitParams    #-}
-{-# LANGUAGE InstanceSigs      #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE TupleSections     #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# LANGUAGE TypeFamilies      #-}
-{-# LANGUAGE UnicodeSyntax     #-}
-{-# LANGUAGE ViewPatterns      #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImplicitParams             #-}
+{-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UnicodeSyntax              #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 -- base --------------------------------
 
@@ -25,6 +26,7 @@ import Data.Functor         ( Functor, fmap )
 import Data.List            ( zip )
 import Data.Maybe           ( Maybe( Just, Nothing ) )
 import Data.Monoid          ( Monoid )
+import Data.Semigroup       ( Semigroup )
 import Data.String          ( String, lines, unlines )
 import Data.Tuple           ( fst, snd )
 import GHC.Exts             ( fromList )
@@ -42,11 +44,11 @@ import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable, toText, toString )
+import Data.Textual  ( Printable( print ), toText, toString )
 
 -- dlist -------------------------------
 
-import Data.DList  ( DList )
+import Data.DList  ( DList, singleton )
 
 -- fluffy ------------------------------
 
@@ -70,12 +72,16 @@ import Control.Monad.Log  ( MonadLog, Severity(..)
 
 import MonadIO  ( MonadIO, liftIO )
 
+-- mono-traversable --------------------
+
+import Data.MonoTraversable  ( Element, MonoFunctor( omap ) )
+
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣), (⊢) )
-import Data.MoreUnicode.Monad    ( (≫) )
+import Data.MoreUnicode.Monad    ( (⪼), (≫) )
 import Data.MoreUnicode.Monoid   ( ф, ю )
 import Data.MoreUnicode.Natural  ( ℕ )
 
@@ -93,7 +99,15 @@ import Data.Text.Prettyprint.Doc  ( Doc, Pretty, SimpleDocStream(..)
                                   , defaultLayoutOptions, enclose, hsep, indent
                                   , layoutPretty, line, pretty, space, vsep
                                   )
-import Data.Text.Prettyprint.Doc.Render.Util.Panic
+import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
+                                                    , panicUncaughtFail
+                                                    , panicUnpairedPop
+                                                    )
+import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
+
+-- printer -----------------------------
+
+import qualified  Text.Printer  as  P
 
 -- safe --------------------------------
 
@@ -138,13 +152,13 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 --------------------------------------------------------------------------------
 
--- Lg→LogEntry; log to Log; use logMessage in logIO; logIO'→logIO; 
+-- TODO:log to Log; use logMessage in logIO; logIO'→logIO; printable Log{,Entry}
 -- add logIO' to carry arbitrary data; same for log & log'
 -- add simple logging (without io); different brackets for severity & timestamp
--- tighten up naming; split out mocking & logging
--- split out stacktrace tests
--- clearer mock logging (e.g. (CMD) vs [CMD])
--- cmd logging using showcmdforuser
+-- tighten up naming; split out mocking & logging; terminal colouring
+-- split out stacktrace tests; demo logging methods incl. stderr
+-- clearer mock logging (e.g. (CMD) vs [CMD]); options handlers for logs
+-- cmd logging using showcmdforuser; add example of mapped logs for payload
 
 -- Placed at the top to reduce line movements messing up the tests
 logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
@@ -158,32 +172,29 @@ bob = let -- stack = GHC.Stack.callStack
            mybob = logIO Informational "bob"
         in mybob -- lg Informational "bob"
 
-bob' ∷ (MonadIO μ, MonadLog LogEntry μ, ?stack ∷ CallStack) ⇒ μ ()
+bob' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒ μ ()
 bob' = let -- stack = GHC.Stack.callStack
            -- add an additional callstack to test the formatting
 --           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
-           mybob' ∷ (MonadIO μ, MonadLog LogEntry μ, HasCallStack) ⇒ μ ()
-           mybob' = logIO' Informational "bob'"
+           mybob' ∷ (MonadIO μ, MonadLog Log μ, HasCallStack) ⇒ μ ()
+           mybob' = logIO' Informational "bob'" ⪼ logIO' Notice "jimmy"
         in mybob' -- lg Informational "bob"
-
-
-
 
 renderTests ∷ TestTree
 renderTests =
   let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
       exp1 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:158:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:159:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:189:110 in main:Main"
+             , "          logIO, called at src/MockIO.hs:172:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:173:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:200:110 in main:Main"
              ]
       exp2 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:158:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:159:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:191:114 in main:Main"
+             , "          logIO, called at src/MockIO.hs:172:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:173:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:202:114 in main:Main"
              , "            foo, called at c:1:2 in a:b"
              ]
-      exp3 = [ "[Info ] «src/MockIO.hs#158» bob"
+      exp3 = [ "[Info ] «src/MockIO.hs#172» bob"
              ]
    in testGroup "render" $
         ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
@@ -192,11 +203,11 @@ renderTests =
           , assertListEqIO "renderHead" exp3 (lines ∘ show ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ bob)
           ]
 
-logIO' ∷ (MonadIO μ, MonadLog LogEntry μ, ?stack ∷ CallStack) ⇒
+logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
 logIO' sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage $ withCallStack (txt,tm,sv,())
+  logMessage ∘ Log' ∘ singleton $ withCallStack (txt,tm,sv,())
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
@@ -520,35 +531,55 @@ renderWithSeverity' f m =
 
 
 {- | Log with timestamp, callstack, severity & IOClass -}
-data LogEntry' α = LogEntry' { unLogEntry' ∷ (CallStack, UTCTime, Severity, Text, α) }
+data LogEntry' α = LogEntry' { _callstack ∷ CallStack
+                             , _timestamp ∷ UTCTime
+                             , _severity  ∷ Severity
+                             , _logtxt    ∷ Text
+                             , _payload   ∷ α
+                             }
   deriving Show
 -- data LogCSTS
 type LogEntry = LogEntry' ()
 
-newtype Log' α = DList (LogEntry' α)
+-- if you want to include the payload in the log message, use an fmap on the
+-- logentries to format the payload with the text
+
+{- | Render an instance of a `Pretty` type to text, with default options. -}
+renderText ∷ Pretty α ⇒ α → Text
+renderText = renderStrict ∘ layoutPretty defaultLayoutOptions ∘ pretty
+
+instance Pretty (LogEntry' α) where
+  pretty (LogEntry' _ _ _ txt _) = pretty txt
+  
+instance Printable (LogEntry' α) where
+  print = P.text ∘ renderText
+
+newtype Log' α = Log' (DList (LogEntry' α))
+  deriving (Monoid,Semigroup,Show)
 type Log = Log' ()
+
+instance Pretty (Log' α) where
+  pretty (Log' logs) = vsep (pretty ⊳ toList logs)
+
+instance Printable (Log' α) where
+  print = P.text ∘ renderText
+
 
 instance WithCallStack (LogEntry' β) where
   type CSElement (LogEntry' β) = (Text,UTCTime,Severity,β)
-  withCallStack (txt,tm,sv,b) = LogEntry' (popCallStack ?stack,tm,sv,txt,b)
+  withCallStack (txt,tm,sv,b) = LogEntry' (popCallStack ?stack) tm sv txt b
   {-# INLINE withCallStack #-}
-  csDiscard (LogEntry' (_,tm,sv,txt,b))   = (txt,tm,sv,b)
-  _callStack_ (LogEntry' (cs,_,_,_,_))  = cs
+  csDiscard (LogEntry' _ tm sv txt b)   = (txt,tm,sv,b)
+  _callStack_ (LogEntry' cs _ _ _ _)  = cs
 
 instance HasCallstack (LogEntry' β) where
-  callStack' = lens (\ (LogEntry' (cs,_,_,_,_)) → cs)
-                    (\ (LogEntry' (_,tm,sv,txt,a)) cs → LogEntry' (cs,tm,sv,txt,a))
+  callStack' = lens _callstack (\ le cs → le { _callstack = cs })
 
 instance HasSeverity (LogEntry' α) where
-  severity = lens (\ (LogEntry' (_,_,sv,_,_)) → sv)
-                  (\ (LogEntry' (cs,tm,_,txt,a)) sv → LogEntry' (cs,tm,sv,txt,a))
+  severity = lens _severity (\ le sv → le { _severity = sv })
 
 instance HasUTCTime (LogEntry' α) where
-  utcTime = lens (\ (LogEntry' (_,tm,_,_,_)) → tm)
-                 (\ (LogEntry' (cs,_,sv,txt,a)) tm → LogEntry' (cs,tm,sv,txt,a))
-
-instance Pretty (LogEntry' α) where
-  pretty (LogEntry' (_,_,_,txt,_)) = pretty txt
+  utcTime = lens _timestamp (\ le tm → le { _timestamp = tm })
 
 -- bob = withCallStack @(CallStack,Text) "bob"
 
