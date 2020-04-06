@@ -99,6 +99,7 @@ import Data.Text.Prettyprint.Doc  ( Doc, Pretty, SimpleDocStream(..)
                                   , defaultLayoutOptions, enclose, hsep, indent
                                   , layoutPretty, line, pretty, space, vsep
                                   )
+import Data.Text.Prettyprint.Doc.Util  ( reflow )
 import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
                                                     , panicUncaughtFail
                                                     , panicUnpairedPop
@@ -134,8 +135,12 @@ import TastyPlus  ( (≟), runTestsP, runTestsReplay, runTestTree, withResource'
 import qualified  Data.Text       as  T
 import qualified  Data.Text.Lazy  as  LT
 
-import Data.Text     ( Text, pack )
+import Data.Text     ( Text, intercalate, pack )
 import Data.Text.IO  ( readFile )
+
+-- tfmt --------------------------------
+
+import Text.Fmt  ( fmt )
 
 -- time --------------------------------
 
@@ -184,17 +189,17 @@ renderTests ∷ TestTree
 renderTests =
   let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
       exp1 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:172:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:173:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:200:110 in main:Main"
+             , "          logIO, called at src/MockIO.hs:177:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:178:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:205:110 in main:Main"
              ]
       exp2 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:172:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:173:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:202:114 in main:Main"
+             , "          logIO, called at src/MockIO.hs:177:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:178:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:207:114 in main:Main"
              , "            foo, called at c:1:2 in a:b"
              ]
-      exp3 = [ "[Info ] «src/MockIO.hs#172» bob"
+      exp3 = [ "[Info ] «src/MockIO.hs#177» bob"
              ]
    in testGroup "render" $
         ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
@@ -541,6 +546,9 @@ data LogEntry' α = LogEntry' { _callstack ∷ CallStack
 -- data LogCSTS
 type LogEntry = LogEntry' ()
 
+logtxt ∷ Lens' (LogEntry' α) Text
+logtxt = lens _logtxt (\ le txt → le { _logtxt = txt })
+
 -- if you want to include the payload in the log message, use an fmap on the
 -- logentries to format the payload with the text
 
@@ -552,7 +560,7 @@ instance Pretty (LogEntry' α) where
   pretty (LogEntry' _ _ _ txt _) = pretty txt
   
 instance Printable (LogEntry' α) where
-  print = P.text ∘ renderText
+  print le = P.text $ [fmt|%w : %T|] (le ⊣ severity) (le ⊣ logtxt)
 
 newtype Log' α = Log' (DList (LogEntry' α))
   deriving (Monoid,Semigroup,Show)
