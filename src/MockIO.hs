@@ -10,6 +10,8 @@
 {-# LANGUAGE UnicodeSyntax              #-}
 {-# LANGUAGE ViewPatterns               #-}
 
+import Prelude  ( undefined )
+
 -- base --------------------------------
 
 import qualified  GHC.Stack
@@ -25,9 +27,9 @@ import Data.Function        ( ($), (&), const, id )
 import Data.Functor         ( Functor, fmap )
 import Data.List            ( zip )
 import Data.Maybe           ( Maybe( Just, Nothing ) )
-import Data.Monoid          ( Monoid )
-import Data.Semigroup       ( Semigroup )
-import Data.String          ( String, lines, unlines )
+import Data.Monoid          ( Monoid( mappend, mconcat, mempty ) )
+import Data.Semigroup       ( Semigroup( (<>), sconcat, stimes ) )
+import Data.String          ( String, lines )
 import Data.Tuple           ( fst, snd )
 import GHC.Exts             ( fromList )
 import GHC.Stack            ( CallStack, HasCallStack, SrcLoc, getCallStack
@@ -79,7 +81,7 @@ import Data.MonoTraversable  ( Element, MonoFunctor( omap ) )
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
-import Data.MoreUnicode.Functor  ( (⊳) )
+import Data.MoreUnicode.Functor  ( (⊳), (⩺) )
 import Data.MoreUnicode.Lens     ( (⊣), (⊢) )
 import Data.MoreUnicode.Monad    ( (⪼), (≫) )
 import Data.MoreUnicode.Monoid   ( ф, ю )
@@ -95,9 +97,11 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 -- prettyprinter -----------------------
 
 import Data.Text.Prettyprint.Doc  ( Doc, Pretty, SimpleDocStream(..)
-                                  , (<+>), align, annotate, brackets
-                                  , defaultLayoutOptions, enclose, hsep, indent
-                                  , layoutPretty, line, pretty, space, vsep
+                                  , (<+>)
+                                  , align, annotate, brackets
+                                  , defaultLayoutOptions, emptyDoc, enclose
+                                  , hsep, indent, layoutPretty, line, pretty
+                                  , space, vsep
                                   )
 import Data.Text.Prettyprint.Doc.Util  ( reflow )
 import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
@@ -135,7 +139,7 @@ import TastyPlus  ( (≟), runTestsP, runTestsReplay, runTestTree, withResource'
 import qualified  Data.Text       as  T
 import qualified  Data.Text.Lazy  as  LT
 
-import Data.Text     ( Text, intercalate, pack )
+import Data.Text     ( Text, intercalate, pack, take, unlines )
 import Data.Text.IO  ( readFile )
 
 -- tfmt --------------------------------
@@ -157,8 +161,8 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 --------------------------------------------------------------------------------
 
--- TODO:log to Log; use logMessage in logIO; logIO'→logIO; printable Log{,Entry}
--- add logIO' to carry arbitrary data; same for log & log'
+-- TODO: use logMessage in logIO; logIO'→logIO; printable Log{,Entry}
+-- add logIO' to carry arbitrary data; same for log & log'; elide WithCallStack
 -- add simple logging (without io); different brackets for severity & timestamp
 -- tighten up naming; split out mocking & logging; terminal colouring
 -- split out stacktrace tests; demo logging methods incl. stderr
@@ -167,7 +171,7 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 -- Placed at the top to reduce line movements messing up the tests
 logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
-logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,())
+logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,Null)
 
 bob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
 bob = let -- stack = GHC.Stack.callStack
@@ -182,24 +186,25 @@ bob' = let -- stack = GHC.Stack.callStack
            -- add an additional callstack to test the formatting
 --           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
            mybob' ∷ (MonadIO μ, MonadLog Log μ, HasCallStack) ⇒ μ ()
-           mybob' = logIO' Informational "bob'" ⪼ logIO' Notice "jimmy"
+           mybob' = do logIO' Informational "bob'"
+                       logIO' Notice "jimmy"
         in mybob' -- lg Informational "bob"
 
 renderTests ∷ TestTree
 renderTests =
   let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
       exp1 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:177:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:178:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:205:110 in main:Main"
+             , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:210:110 in main:Main"
              ]
       exp2 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:177:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:178:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:207:114 in main:Main"
+             , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
+             , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
+             , "            bob, called at src/MockIO.hs:212:114 in main:Main"
              , "            foo, called at c:1:2 in a:b"
              ]
-      exp3 = [ "[Info ] «src/MockIO.hs#177» bob"
+      exp3 = [ "[Info ] «src/MockIO.hs#181» bob"
              ]
    in testGroup "render" $
         ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
@@ -212,7 +217,7 @@ logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
 logIO' sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log' ∘ singleton $ withCallStack (txt,tm,sv,())
+  logMessage ∘ Log' ∘ singleton $ withCallStack (txt,tm,sv,Null)
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
@@ -430,8 +435,8 @@ class HasCallstack α where
 instance HasCallstack CallStack where
   callStack' = id
 
-csHead ∷ HasCallstack α ⇒ α → Maybe (String,SrcLoc)
-csHead = headMay ∘ getCallStack ∘ view callStack'
+stackHead ∷ HasCallstack α ⇒ α → Maybe (String,SrcLoc)
+stackHead = headMay ∘ getCallStack ∘ view callStack'
 
 class WithCallStack ω where
   type CSElement ω
@@ -483,10 +488,20 @@ renderWithCallStack f m =
 
 renderWithStackHead ∷ HasCallstack δ ⇒ (δ -> Doc ρ) -> δ -> Doc ρ
 renderWithStackHead f m =
-  let renderStackHead (Just (_,loc)) = pretty $ srcLocFile loc ⊕ "#" ⊕ show (srcLocStartLine loc)
-  
---  f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ _callStack_ m))
-   in enclose "«" "»" (renderStackHead $ csHead m)  ⊞ align (f m)
+  let renderStackHead = renderLocation ∘ fmap snd
+   in renderStackHead (stackHead m) ⊞ align (f m)
+
+locToString ∷ SrcLoc → String
+locToString loc = "«" ⊕ srcLocFile loc ⊕ "#" ⊕ show (srcLocStartLine loc) ⊕ "»"
+
+renderLocation ∷ Maybe SrcLoc → Doc α
+renderLocation (Just loc) = pretty $ locToString loc
+renderLocation Nothing    = emptyDoc
+
+stackHeadTxt ∷ HasCallstack α ⇒ α → Text
+stackHeadTxt a = case locToString ⩺ fmap snd $ stackHead a of
+                   Just s  → pack s 
+                   Nothing → ""
 
 {-
 λ> :t renderWithSeverity' (Main.renderWithCallStack pretty)
@@ -542,12 +557,30 @@ data LogEntry' α = LogEntry' { _callstack ∷ CallStack
                              , _logtxt    ∷ Text
                              , _payload   ∷ α
                              }
-  deriving Show
--- data LogCSTS
-type LogEntry = LogEntry' ()
+  deriving (Functor,Show)
+
+data Null = Null
+
+instance Semigroup Null where
+  _ <> _     = Null
+  sconcat _  = Null
+  stimes _ _ = Null
+
+instance Monoid Null where
+  mempty      = Null
+  mappend _ _ = Null
+  mconcat _   = Null
+
+instance Printable Null where
+  print _ = P.text ""
+
+type LogEntry = LogEntry' Null
 
 logtxt ∷ Lens' (LogEntry' α) Text
 logtxt = lens _logtxt (\ le txt → le { _logtxt = txt })
+
+payload ∷ Lens' (LogEntry' α) α
+payload = lens _payload (\ le p → le { _payload = p })
 
 -- if you want to include the payload in the log message, use an fmap on the
 -- logentries to format the payload with the text
@@ -558,19 +591,23 @@ renderText = renderStrict ∘ layoutPretty defaultLayoutOptions ∘ pretty
 
 instance Pretty (LogEntry' α) where
   pretty (LogEntry' _ _ _ txt _) = pretty txt
-  
-instance Printable (LogEntry' α) where
-  print le = P.text $ [fmt|%w : %T|] (le ⊣ severity) (le ⊣ logtxt)
 
-newtype Log' α = Log' (DList (LogEntry' α))
-  deriving (Monoid,Semigroup,Show)
-type Log = Log' ()
+instance Printable α ⇒ Printable (LogEntry' α) where
+  print le =
+    let pload = case (toText $ le ⊣ payload) of
+                  "" → ""
+                  t  → " <" ⊕ t ⊕ ">"
+     in P.text $ [fmt|[%t|%-4t] %t %T%t|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (le ⊣ logtxt) pload
+
+newtype Log' α = Log' { unLog' ∷ DList (LogEntry' α) }
+  deriving (Functor, Monoid,Semigroup,Show)
+type Log = Log' Null
 
 instance Pretty (Log' α) where
   pretty (Log' logs) = vsep (pretty ⊳ toList logs)
 
-instance Printable (Log' α) where
-  print = P.text ∘ renderText
+instance Printable α ⇒ Printable (Log' α) where
+  print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog'
 
 
 instance WithCallStack (LogEntry' β) where
