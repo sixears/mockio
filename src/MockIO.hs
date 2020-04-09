@@ -63,7 +63,7 @@ import Control.Lens  ( Lens', lens, view )
 -- logging-effect ----------------------
 
 import qualified  Control.Monad.Log
-import Control.Monad.Log  ( MonadLog, Severity(..)
+import Control.Monad.Log  ( MonadLog, PureLoggingT, Severity(..)
                           , WithSeverity( WithSeverity )
                           , defaultBatchingOptions, logMessage, timestamp
                           , renderWithSeverity, runLoggingT, runPureLoggingT
@@ -192,26 +192,27 @@ bob' = let -- stack = GHC.Stack.callStack
 
 renderTests ∷ TestTree
 renderTests =
-  let c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
-      exp1 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:210:110 in main:Main"
-             ]
-      exp2 = [ "[Info ] bob"
-             , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
-             , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
-             , "            bob, called at src/MockIO.hs:212:114 in main:Main"
-             , "            foo, called at c:1:2 in a:b"
-             ]
-      exp3 = [ "[Info ] «src/MockIO.hs#181» bob"
-             ]
-   in testGroup "render" $
+  testGroup "render" $
         ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
           , let ?stack = c
              in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
-          , assertListEqIO "renderHead" exp3 (lines ∘ show ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ bob)
+          , assertListEqIO "renderLogs" exp4 (renderLogs' bob')
           ]
+  where c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
+        exp1 = [ "[Info ] bob"
+               , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
+               , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
+               , "            bob, called at src/MockIO.hs:196:110 in main:Main"
+               ]
+        exp2 = [ "[Info ] bob"
+               , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
+               , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
+               , "            bob, called at src/MockIO.hs:198:114 in main:Main"
+               , "            foo, called at c:1:2 in a:b"
+               ]
+        exp4 = [ "«src/MockIO.hs#189» bob'"
+               , "«src/MockIO.hs#190» jimmy"
+               ]
 
 logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
@@ -586,8 +587,22 @@ payload = lens _payload (\ le p → le { _payload = p })
 -- logentries to format the payload with the text
 
 {- | Render an instance of a `Pretty` type to text, with default options. -}
+renderDoc ∷ Doc α → Text
+renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
+
+renderLogs ∷ Monad η ⇒ PureLoggingT (Log' σ) η α → η (α, DList Text)
+renderLogs a = do
+  (a',ls) ← runPureLoggingT a
+  return ∘ (a',) $ renderDoc ∘ renderWithStackHead pretty ⊳ unLog' ls
+
+{- | Performing renderLogs, with IO returning () is sufficiently common to
+     warrant a cheap alias. -}
+renderLogs' ∷ Monad η ⇒ PureLoggingT (Log' σ) η () → η (DList Text)
+renderLogs' = snd ⩺ renderLogs
+
+{- | Render an instance of a `Pretty` type to text, with default options. -}
 renderText ∷ Pretty α ⇒ α → Text
-renderText = renderStrict ∘ layoutPretty defaultLayoutOptions ∘ pretty
+renderText = renderDoc ∘ pretty
 
 instance Pretty (LogEntry' α) where
   pretty (LogEntry' _ _ _ txt _) = pretty txt
@@ -600,7 +615,7 @@ instance Printable α ⇒ Printable (LogEntry' α) where
      in P.text $ [fmt|[%t|%-4t] %t %T%t|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (le ⊣ logtxt) pload
 
 newtype Log' α = Log' { unLog' ∷ DList (LogEntry' α) }
-  deriving (Functor, Monoid,Semigroup,Show)
+  deriving (Functor,Monoid,Semigroup,Show)
 type Log = Log' Null
 
 instance Pretty (Log' α) where
@@ -608,7 +623,6 @@ instance Pretty (Log' α) where
 
 instance Printable α ⇒ Printable (Log' α) where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog'
-
 
 instance WithCallStack (LogEntry' β) where
   type CSElement (LogEntry' β) = (Text,UTCTime,Severity,β)
@@ -625,8 +639,6 @@ instance HasSeverity (LogEntry' α) where
 
 instance HasUTCTime (LogEntry' α) where
   utcTime = lens _timestamp (\ le tm → le { _timestamp = tm })
-
--- bob = withCallStack @(CallStack,Text) "bob"
 
 assertEq' ∷ (Eq t) ⇒ (t → Text) → t → t → Assertion
 assertEq' toT expected got =
