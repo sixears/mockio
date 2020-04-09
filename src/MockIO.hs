@@ -44,6 +44,10 @@ import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 
+-- data-default ------------------------
+
+import Data.Default  ( Default( def ) )
+
 -- data-textual ------------------------
 
 import Data.Textual  ( Printable( print ), toText, toString )
@@ -96,7 +100,8 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc  ( Doc, Pretty, SimpleDocStream(..)
+import Data.Text.Prettyprint.Doc  ( Doc, PageWidth( Unbounded ), Pretty
+                                  , SimpleDocStream(..)
                                   , (<+>)
                                   , align, annotate, brackets
                                   , defaultLayoutOptions, emptyDoc, enclose
@@ -199,19 +204,19 @@ renderTests =
           , assertListEqIO "renderLogs" exp4 (renderLogs' bob')
           ]
   where c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
-        exp1 = [ "[Info ] bob"
-               , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
-               , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
-               , "            bob, called at src/MockIO.hs:196:110 in main:Main"
+        exp1 = [ "[Info] bob"
+               , "         logIO, called at src/MockIO.hs:186:20 in main:Main"
+               , "           mybob, called at src/MockIO.hs:187:12 in main:Main"
+               , "           bob, called at src/MockIO.hs:201:110 in main:Main"
                ]
-        exp2 = [ "[Info ] bob"
-               , "          logIO, called at src/MockIO.hs:181:20 in main:Main"
-               , "            mybob, called at src/MockIO.hs:182:12 in main:Main"
-               , "            bob, called at src/MockIO.hs:198:114 in main:Main"
-               , "            foo, called at c:1:2 in a:b"
+        exp2 = [ "[Info] bob"
+               , "         logIO, called at src/MockIO.hs:186:20 in main:Main"
+               , "           mybob, called at src/MockIO.hs:187:12 in main:Main"
+               , "           bob, called at src/MockIO.hs:203:114 in main:Main"
+               , "           foo, called at c:1:2 in a:b"
                ]
-        exp4 = [ "«src/MockIO.hs#189» bob'"
-               , "«src/MockIO.hs#190» jimmy"
+        exp4 = [ "[Info] «src/MockIO.hs#194» bob'"
+               , "[Note] «src/MockIO.hs#195» jimmy"
                ]
 
 logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
@@ -541,13 +546,13 @@ renderWithSeverity' ∷ HasSeverity τ ⇒ (τ → Doc ρ) → τ → Doc ρ
 renderWithSeverity' f m =
   let pp ∷ HasSeverity α ⇒ α → Doc ann
       pp sv = pretty $ case sv ⊣ severity of
-                         Emergency     → ("EMERG" ∷ Text)
-                         Alert         → "ALERT"
-                         Critical      → "CRIT "
-                         Warning       → "Warn "
-                         Notice        → "Note "
-                         Informational → "Info "
-                         Debug         → "Debug"
+                         Emergency     → ("EMRG" ∷ Text)
+                         Alert         → "ALRT"
+                         Critical      → "CRIT"
+                         Warning       → "Warn"
+                         Notice        → "Note"
+                         Informational → "Info"
+                         Debug         → "Debg"
    in brackets (pp m) ⊞ align (f m)
 
 
@@ -590,10 +595,30 @@ payload = lens _payload (\ le p → le { _payload = p })
 renderDoc ∷ Doc α → Text
 renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
 
+data LogRenderType = LRO_Plain
+                   | LRO_Severity
+                   | LRO_TimeStamp
+                   | LRO_StackHead
+                   | LRO_StackHeadTS
+                   | LRO_Stack
+                   | LRO_StackTS
+data LogRenderOpts = LogRenderOpts { _lroType  ∷ LogRenderType
+                                   , _lroWidth ∷ PageWidth
+                                   }
+
+instance Default LogRenderOpts where
+  def = LogRenderOpts LRO_TimeStamp Unbounded
+
+{- | Render logs to text, including severity. -}
 renderLogs ∷ Monad η ⇒ PureLoggingT (Log' σ) η α → η (α, DList Text)
 renderLogs a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithStackHead pretty ⊳ unLog' ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog' ls
+
+renderLogsSt ∷ Monad η ⇒ PureLoggingT (Log' σ) η α → η (α, DList Text)
+renderLogsSt a = do
+  (a',ls) ← runPureLoggingT a
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog' ls
 
 {- | Performing renderLogs, with IO returning () is sufficiently common to
      warrant a cheap alias. -}
