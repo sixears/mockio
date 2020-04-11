@@ -22,7 +22,7 @@ import Control.Monad        ( Monad, (>>=), mapM, return )
 import Control.Monad.Catch  ( MonadMask )
 import Control.Monad.Identity  ( runIdentity )
 import Data.Eq              ( Eq )
-import Data.Foldable        ( Foldable, toList )
+import Data.Foldable        ( Foldable, mapM_, toList )
 import Data.Function        ( ($), (&), const, id )
 import Data.Functor         ( Functor, fmap )
 import Data.List            ( zip )
@@ -76,7 +76,7 @@ import Control.Monad.Log  ( MonadLog, PureLoggingT, Severity(..)
 
 -- monadio-plus ------------------------
 
-import MonadIO  ( MonadIO, liftIO )
+import MonadIO  ( MonadIO, liftIO, say )
 
 -- mono-traversable --------------------
 
@@ -100,12 +100,15 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc  ( Doc, PageWidth( Unbounded ), Pretty
+import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
+                                  , PageWidth( AvailablePerLine, Unbounded )
+                                  , Pretty
                                   , SimpleDocStream(..)
                                   , (<+>)
                                   , align, annotate, brackets
                                   , defaultLayoutOptions, emptyDoc, enclose
-                                  , hsep, indent, layoutPretty, line, pretty
+                                  , hsep, indent, layoutPageWidth, layoutPretty
+                                  , line, pretty
                                   , space, vsep
                                   )
 import Data.Text.Prettyprint.Doc.Util  ( reflow )
@@ -172,11 +175,11 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 -- tighten up naming; split out mocking & logging; terminal colouring
 -- split out stacktrace tests; demo logging methods incl. stderr
 -- clearer mock logging (e.g. (CMD) vs [CMD]); options handlers for logs
--- cmd logging using showcmdforuser; add example of mapped logs for payload
+-- cmd logging using showcmdforuser
 
 -- Placed at the top to reduce line movements messing up the tests
 logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
-logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv,Null)
+logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv)
 
 bob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
 bob = let -- stack = GHC.Stack.callStack
@@ -192,7 +195,7 @@ bob' = let -- stack = GHC.Stack.callStack
 --           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
            mybob' ∷ (MonadIO μ, MonadLog Log μ, HasCallStack) ⇒ μ ()
            mybob' = do logIO' Informational "bob'"
-                       logIO' Notice "jimmy"
+                       logIO' Notice "this is a much longer line"
         in mybob' -- lg Informational "bob"
 
 renderTests ∷ TestTree
@@ -201,29 +204,33 @@ renderTests =
         ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
           , let ?stack = c
              in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
-          , assertListEqIO "renderLogs" exp4 (renderLogs' bob')
+          , assertListEqIO "renderLogs" exp3 (render LRO_StackHead bob')
+          , assertListEqIO "renderLogs" exp3 (renderLine10 LRO_StackHead bob')
           ]
-  where c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
+  where render t = logRender' (LogRenderOpts t Unbounded)
+        line10 = AvailablePerLine 10 1.0
+        renderLine10 t = logRender' (LogRenderOpts t line10)
+        c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
         exp1 = [ "[Info] bob"
-               , "         logIO, called at src/MockIO.hs:186:20 in main:Main"
-               , "           mybob, called at src/MockIO.hs:187:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:201:110 in main:Main"
+               , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
+               , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
+               , "           bob, called at src/MockIO.hs:204:110 in main:Main"
                ]
         exp2 = [ "[Info] bob"
-               , "         logIO, called at src/MockIO.hs:186:20 in main:Main"
-               , "           mybob, called at src/MockIO.hs:187:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:203:114 in main:Main"
+               , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
+               , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
+               , "           bob, called at src/MockIO.hs:206:114 in main:Main"
                , "           foo, called at c:1:2 in a:b"
                ]
-        exp4 = [ "[Info] «src/MockIO.hs#194» bob'"
-               , "[Note] «src/MockIO.hs#195» jimmy"
+        exp3 = [ "[Info] «src/MockIO.hs#197» bob'"
+               , "[Note] «src/MockIO.hs#198» this is a much longer line"
                ]
 
 logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
 logIO' sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log' ∘ singleton $ withCallStack (txt,tm,sv,Null)
+  logMessage ∘ Log ∘ singleton $ withCallStack (txt,tm,sv)
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
@@ -557,39 +564,15 @@ renderWithSeverity' f m =
 
 
 {- | Log with timestamp, callstack, severity & IOClass -}
-data LogEntry' α = LogEntry' { _callstack ∷ CallStack
-                             , _timestamp ∷ UTCTime
-                             , _severity  ∷ Severity
-                             , _logtxt    ∷ Text
-                             , _payload   ∷ α
-                             }
-  deriving (Functor,Show)
+data LogEntry = LogEntry { _callstack ∷ CallStack
+                         , _timestamp ∷ UTCTime
+                         , _severity  ∷ Severity
+                         , _logtxt    ∷ Text
+                         }
+  deriving Show
 
-data Null = Null
-
-instance Semigroup Null where
-  _ <> _     = Null
-  sconcat _  = Null
-  stimes _ _ = Null
-
-instance Monoid Null where
-  mempty      = Null
-  mappend _ _ = Null
-  mconcat _   = Null
-
-instance Printable Null where
-  print _ = P.text ""
-
-type LogEntry = LogEntry' Null
-
-logtxt ∷ Lens' (LogEntry' α) Text
+logtxt ∷ Lens' LogEntry Text
 logtxt = lens _logtxt (\ le txt → le { _logtxt = txt })
-
-payload ∷ Lens' (LogEntry' α) α
-payload = lens _payload (\ le p → le { _payload = p })
-
--- if you want to include the payload in the log message, use an fmap on the
--- logentries to format the payload with the text
 
 {- | Render an instance of a `Pretty` type to text, with default options. -}
 renderDoc ∷ Doc α → Text
@@ -602,67 +585,94 @@ data LogRenderType = LRO_Plain
                    | LRO_StackHeadTS
                    | LRO_Stack
                    | LRO_StackTS
+  deriving Show
+
 data LogRenderOpts = LogRenderOpts { _lroType  ∷ LogRenderType
                                    , _lroWidth ∷ PageWidth
                                    }
+  deriving Show
+
+lroType ∷ Lens' LogRenderOpts LogRenderType
+lroType = lens _lroType (\ opts typ → opts { _lroType = typ })
+
+lroWidth ∷ Lens' LogRenderOpts PageWidth
+lroWidth = lens _lroWidth (\ opts w → opts { _lroWidth = w })
+
+lroOpts ∷ Lens' LogRenderOpts LayoutOptions
+lroOpts = lens (LayoutOptions ∘ _lroWidth) (\ opts lo → opts { _lroWidth = layoutPageWidth lo })
 
 instance Default LogRenderOpts where
   def = LogRenderOpts LRO_TimeStamp Unbounded
 
+{- | Render logs to stderr. -}
+logsToStderr ∷ MonadIO μ ⇒ LogRenderOpts → PureLoggingT Log μ α → μ α
+logsToStderr opts io = do
+  (x,ts) ← logRender opts io
+  mapM_ say ts
+  return x
+
+logRender ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η α → η (α, DList Text)
+logRender opts a = do
+  let renderer = case opts ⊣ lroType of
+                   LRO_Plain → pretty
+                   _         → renderWithSeverity' (renderWithStackHead pretty)
+  (a',ls) ← runPureLoggingT a
+  return ∘ (a',) $ renderStrict ∘ layoutPretty (opts ⊣ lroOpts) ∘ renderer ⊳ unLog ls
+
+{- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
+logRender' ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η () → η (DList Text)
+logRender' = fmap snd ⩺ logRender
+
 {- | Render logs to text, including severity. -}
-renderLogs ∷ Monad η ⇒ PureLoggingT (Log' σ) η α → η (α, DList Text)
+renderLogs ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogs a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog' ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog ls
 
-renderLogsSt ∷ Monad η ⇒ PureLoggingT (Log' σ) η α → η (α, DList Text)
+renderLogsSt ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogsSt a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog' ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog ls
 
 {- | Performing renderLogs, with IO returning () is sufficiently common to
      warrant a cheap alias. -}
-renderLogs' ∷ Monad η ⇒ PureLoggingT (Log' σ) η () → η (DList Text)
+renderLogs' ∷ Monad η ⇒ PureLoggingT Log η () → η (DList Text)
 renderLogs' = snd ⩺ renderLogs
 
 {- | Render an instance of a `Pretty` type to text, with default options. -}
 renderText ∷ Pretty α ⇒ α → Text
 renderText = renderDoc ∘ pretty
 
-instance Pretty (LogEntry' α) where
-  pretty (LogEntry' _ _ _ txt _) = pretty txt
+instance Pretty LogEntry where
+  pretty (LogEntry _ _ _ txt) = pretty txt
 
-instance Printable α ⇒ Printable (LogEntry' α) where
+instance Printable LogEntry where
   print le =
-    let pload = case (toText $ le ⊣ payload) of
-                  "" → ""
-                  t  → " <" ⊕ t ⊕ ">"
-     in P.text $ [fmt|[%t|%-4t] %t %T%t|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (le ⊣ logtxt) pload
+    P.text $ [fmt|[%t|%-4t] %t %T|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (le ⊣ logtxt)
 
-newtype Log' α = Log' { unLog' ∷ DList (LogEntry' α) }
-  deriving (Functor,Monoid,Semigroup,Show)
-type Log = Log' Null
+newtype Log = Log { unLog ∷ DList LogEntry }
+  deriving (Monoid,Semigroup,Show)
 
-instance Pretty (Log' α) where
-  pretty (Log' logs) = vsep (pretty ⊳ toList logs)
+instance Pretty Log where
+  pretty (Log logs) = vsep (pretty ⊳ toList logs)
 
-instance Printable α ⇒ Printable (Log' α) where
-  print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog'
+instance Printable Log where
+  print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
-instance WithCallStack (LogEntry' β) where
-  type CSElement (LogEntry' β) = (Text,UTCTime,Severity,β)
-  withCallStack (txt,tm,sv,b) = LogEntry' (popCallStack ?stack) tm sv txt b
+instance WithCallStack LogEntry where
+  type CSElement LogEntry = (Text,UTCTime,Severity)
+  withCallStack (txt,tm,sv) = LogEntry (popCallStack ?stack) tm sv txt
   {-# INLINE withCallStack #-}
-  csDiscard (LogEntry' _ tm sv txt b)   = (txt,tm,sv,b)
-  _callStack_ (LogEntry' cs _ _ _ _)  = cs
+  csDiscard (LogEntry _ tm sv txt)   = (txt,tm,sv)
+  _callStack_ (LogEntry cs _ _ _ )  = cs
 
-instance HasCallstack (LogEntry' β) where
+instance HasCallstack LogEntry where
   callStack' = lens _callstack (\ le cs → le { _callstack = cs })
 
-instance HasSeverity (LogEntry' α) where
+instance HasSeverity LogEntry where
   severity = lens _severity (\ le sv → le { _severity = sv })
 
-instance HasUTCTime (LogEntry' α) where
+instance HasUTCTime LogEntry where
   utcTime = lens _timestamp (\ le tm → le { _timestamp = tm })
 
 assertEq' ∷ (Eq t) ⇒ (t → Text) → t → t → Assertion
