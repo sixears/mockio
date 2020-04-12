@@ -195,7 +195,9 @@ bob' = let -- stack = GHC.Stack.callStack
 --           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
            mybob' ∷ (MonadIO μ, MonadLog Log μ, HasCallStack) ⇒ μ ()
            mybob' = do logIO' Informational "bob'"
-                       logIO' Notice "this is a much longer line"
+                       logIO' Notice        "this is a much longer line"
+                       logIO' Critical      "this is a\nmulti-line log\nmessage"
+                       logIO' Emergency     "this is the last message"
         in mybob' -- lg Informational "bob"
 
 renderTests ∷ TestTree
@@ -214,18 +216,24 @@ renderTests =
         exp1 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:204:110 in main:Main"
+               , "           bob, called at src/MockIO.hs:206:110 in main:Main"
                ]
         exp2 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:206:114 in main:Main"
+               , "           bob, called at src/MockIO.hs:208:114 in main:Main"
                , "           foo, called at c:1:2 in a:b"
                ]
         exp3 = [ "[Info] «src/MockIO.hs#197» bob'"
                , "[Note] «src/MockIO.hs#198» this is a much longer line"
+               , intercalate "\n" [ "[CRIT] «src/MockIO.hs#199» this is a"
+                                  , "                           multi-line log"
+                                  , "                           message"
+                                  ]                   
+               , "[EMRG] «src/MockIO.hs#200» this is the last message"
                ]
 
+{- | A simple text is taken as a single line, unbreakable. -}
 logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
 logIO' sv txt = do
