@@ -198,7 +198,35 @@ bob' = let -- stack = GHC.Stack.callStack
                        logIO' Notice        "this is a much longer line"
                        logIO' Critical      "this is a\nmulti-line log\nmessage"
                        logIO' Emergency     "this is the last message"
+-- XX ADD A DOC
         in mybob' -- lg Informational "bob"
+
+class Loggable τ where
+  toDoc ∷ τ → Doc ()
+
+instance Loggable (Doc ()) where
+  toDoc = id
+
+instance Loggable Text where
+  {- | A simple text is taken as a single line, unbreakable.  Any embedded
+       newlines will be retained, and in the log message, will be indented if
+       necessary to account for (e.g.,) severity, timestamp, callhead. -}
+  toDoc = pretty
+
+logIO_ ∷ (MonadIO μ, Loggable τ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
+         Severity → τ → μ ()
+logIO_ sv txt = do
+  tm ← liftIO getCurrentTime
+  logMessage ∘ Log ∘ singleton $ withCallStack (toDoc txt,tm,sv)
+
+-- We redefine this, rather than simply calling logIO_, so we don't mess with
+-- the callstack.
+logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
+         Severity → Text → μ ()
+logIO' sv txt = do
+  tm ← liftIO getCurrentTime
+  logMessage ∘ Log ∘ singleton $ withCallStack (toDoc txt,tm,sv)
+
 
 renderTests ∷ TestTree
 renderTests =
@@ -216,12 +244,12 @@ renderTests =
         exp1 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:206:117 in main:Main"
+               , "           bob, called at src/MockIO.hs:234:117 in main:Main"
                ]
         exp2 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:208:121 in main:Main"
+               , "           bob, called at src/MockIO.hs:236:121 in main:Main"
                , "           foo, called at c:1:2 in a:b"
                ]
         exp3 = [ "[Info] «src/MockIO.hs#197» bob'"
@@ -232,13 +260,6 @@ renderTests =
                                   ]                   
                , "[EMRG] «src/MockIO.hs#200» this is the last message"
                ]
-
-{- | A simple text is taken as a single line, unbreakable. -}
-logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
-         Severity → Text → μ ()
-logIO' sv txt = do
-  tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ withCallStack (pretty txt,tm,sv)
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
