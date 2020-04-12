@@ -179,7 +179,7 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 -- Placed at the top to reduce line movements messing up the tests
 logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
-logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (txt,tm,sv)
+logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (pretty txt,tm,sv)
 
 bob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
 bob = let -- stack = GHC.Stack.callStack
@@ -203,9 +203,9 @@ bob' = let -- stack = GHC.Stack.callStack
 renderTests ∷ TestTree
 renderTests =
   testGroup "render" $
-        ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
+        ю [ assertListEqIO "render1" exp1 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack (view logtxt)) ⊳ bob)
           , let ?stack = c
-             in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack pretty) ⊳ bob)
+             in assertListEqIO "render2" exp2 (lines ∘ show ∘ renderWithSeverity' (renderWithCallStack (view logtxt)) ⊳ bob)
           , assertListEqIO "renderLogs" exp3 (render LRO_StackHead bob')
           , assertListEqIO "renderLogs" exp3 (renderLine10 LRO_StackHead bob')
           ]
@@ -216,12 +216,12 @@ renderTests =
         exp1 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:206:110 in main:Main"
+               , "           bob, called at src/MockIO.hs:206:117 in main:Main"
                ]
         exp2 = [ "[Info] bob"
                , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
                , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-               , "           bob, called at src/MockIO.hs:208:114 in main:Main"
+               , "           bob, called at src/MockIO.hs:208:121 in main:Main"
                , "           foo, called at c:1:2 in a:b"
                ]
         exp3 = [ "[Info] «src/MockIO.hs#197» bob'"
@@ -238,7 +238,7 @@ logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Text → μ ()
 logIO' sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ withCallStack (txt,tm,sv)
+  logMessage ∘ Log ∘ singleton $ withCallStack (pretty txt,tm,sv)
 
 data ProcIO' ε η ω =
     Cmd { unCmd ∷ MonadError ε η ⇒
@@ -575,11 +575,11 @@ renderWithSeverity' f m =
 data LogEntry = LogEntry { _callstack ∷ CallStack
                          , _timestamp ∷ UTCTime
                          , _severity  ∷ Severity
-                         , _logtxt    ∷ Text
+                         , _logtxt    ∷ Doc ()
                          }
   deriving Show
 
-logtxt ∷ Lens' LogEntry Text
+logtxt ∷ Lens' LogEntry (Doc ())
 logtxt = lens _logtxt (\ le txt → le { _logtxt = txt })
 
 {- | Render an instance of a `Pretty` type to text, with default options. -}
@@ -622,8 +622,8 @@ logsToStderr opts io = do
 logRender ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η α → η (α, DList Text)
 logRender opts a = do
   let renderer = case opts ⊣ lroType of
-                   LRO_Plain → pretty
-                   _         → renderWithSeverity' (renderWithStackHead pretty)
+                   LRO_Plain → view logtxt
+                   _         → renderWithSeverity' (renderWithStackHead (view logtxt))
   (a',ls) ← runPureLoggingT a
   return ∘ (a',) $ renderStrict ∘ layoutPretty (opts ⊣ lroOpts) ∘ renderer ⊳ unLog ls
 
@@ -635,12 +635,12 @@ logRender' = fmap snd ⩺ logRender
 renderLogs ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogs a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead (view logtxt)) ⊳ unLog ls
 
 renderLogsSt ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogsSt a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead pretty) ⊳ unLog ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead (view logtxt)) ⊳ unLog ls
 
 {- | Performing renderLogs, with IO returning () is sufficiently common to
      warrant a cheap alias. -}
@@ -651,24 +651,21 @@ renderLogs' = snd ⩺ renderLogs
 renderText ∷ Pretty α ⇒ α → Text
 renderText = renderDoc ∘ pretty
 
-instance Pretty LogEntry where
-  pretty (LogEntry _ _ _ txt) = pretty txt
-
 instance Printable LogEntry where
   print le =
-    P.text $ [fmt|[%t|%-4t] %t %T|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (le ⊣ logtxt)
+    P.text $ [fmt|[%t|%-4t] %t %t|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (renderDoc $ le ⊣ logtxt)
 
 newtype Log = Log { unLog ∷ DList LogEntry }
   deriving (Monoid,Semigroup,Show)
 
-instance Pretty Log where
-  pretty (Log logs) = vsep (pretty ⊳ toList logs)
+-- instance Pretty Log where
+--   pretty (Log logs) = vsep (pretty ⊳ toList logs)
 
 instance Printable Log where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
 instance WithCallStack LogEntry where
-  type CSElement LogEntry = (Text,UTCTime,Severity)
+  type CSElement LogEntry = (Doc(),UTCTime,Severity)
   withCallStack (txt,tm,sv) = LogEntry (popCallStack ?stack) tm sv txt
   {-# INLINE withCallStack #-}
   csDiscard (LogEntry _ tm sv txt)   = (txt,tm,sv)
@@ -714,13 +711,13 @@ assertListEqIO ∷ (Foldable ψ, Foldable φ, Eq α, Printable α) ⇒
 assertListEqIO = assertListEqIO' toText
 
 renderLogWithoutTimeStamp ∷ LogEntry → Doc ()
-renderLogWithoutTimeStamp = renderWithSeverity' $ renderWithCallStack pretty
+renderLogWithoutTimeStamp = renderWithSeverity' $ renderWithCallStack (view logtxt)
 
 renderLog ∷ LogEntry → Doc ()
-renderLog = renderWithTimestamp ∘ renderWithSeverity' $ renderWithCallStack pretty
+renderLog = renderWithTimestamp ∘ renderWithSeverity' $ renderWithCallStack (view logtxt)
 
 renderLog' ∷ LogEntry → Doc ()
-renderLog' = renderWithTimestamp ∘ renderWithSeverity' $ renderWithStackHead pretty
+renderLog' = renderWithTimestamp ∘ renderWithSeverity' $ renderWithStackHead (view logtxt)
 
 {-
 renderWithTimestamp ∷ (UTCTime → String)
