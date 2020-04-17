@@ -186,34 +186,6 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
 logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (pretty txt,tm,sv)
 
-bob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
-bob = let -- stack = GHC.Stack.callStack
-           -- add an additional callstack to test the formatting
-           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
---           mybob ∷ HasCallStack ⇒ IO LogEntry
-           mybob = logIO Informational "bob"
-        in mybob -- lg Informational "bob"
-
-bob' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒ μ ()
-bob' = let -- stack = GHC.Stack.callStack
-           -- add an additional callstack to test the formatting
---           mybob ∷ (?stack ∷ CallStack) ⇒ IO LogEntry
-           mybob' ∷ (MonadIO μ, MonadLog Log μ, HasCallStack) ⇒ μ ()
-           mybob' = do logIO' Informational "bob'"
-                       logIO' Notice        "this is a much longer line"
-                       logIO' Critical      "this is a\nmulti-line log\nmessage"
-                       let valign = align ∘ vsep
-                       logIO_ Warning       ("this is" ⊞
-                                             valign [ "a"
-                                                    , "vertically"
-                                                    ⊞ valign [ "aligned"
-                                                             , "message"
-                                                             ]
-                                                    ])
-                       logIO' Emergency     "this is the last message"
--- XX ADD A DOC
-        in mybob' -- lg Informational "bob"
-
 logIO_ ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Doc () → μ ()
 logIO_ sv doc = do
@@ -282,11 +254,6 @@ renderTests =
       line10 = AvailablePerLine 10 1.0
       renderLine10 t = logRender' (LogRenderOpts [] line10 {- t -})
       c = GHC.Stack.fromCallSiteList [("foo",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)]
-      exp1 = [ "[Info] bob"
-             , "         logIO, called at src/MockIO.hs:189:20 in main:Main"
-             , "           mybob, called at src/MockIO.hs:190:12 in main:Main"
-             , "           bob, called at src/MockIO.hs:230:117 in main:Main"
-             ]
       exp2 = [ intercalate "\n" [ "[Info] log_entry 1"
                                 , "  stack0, called at c:1:2 in a:b"
                                 , "    stack1, called at f:5:6 in d:e"
