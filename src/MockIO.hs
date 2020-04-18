@@ -184,7 +184,7 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 --------------------------------------------------------------------------------
 
 -- TODO:
--- add logIO' to carry arbitrary data; same for log & log'; elide WithCallStack
+-- add logIO' to carry arbitrary data; same for log & log'
 -- add simple logging (without io); different brackets for severity & timestamp
 -- tighten up naming; split out mocking & logging; terminal colouring
 -- split out stacktrace tests; demo logging methods incl. stderr
@@ -517,42 +517,6 @@ instance HasCallstack CallStack where
 stackHead ∷ HasCallstack α ⇒ α → Maybe (String,SrcLoc)
 stackHead = headMay ∘ getCallStack ∘ view callStack'
 
-class WithCallStack ω where
-  type CSElement ω
-  withCallStack ∷ (?stack ∷ CallStack, HasCallStack) ⇒ CSElement ω → ω
-  csDiscard ∷ ω -> CSElement ω
-  _callStack_ ∷ ω → CallStack
-
-instance WithCallStack CallStack where
-  type CSElement CallStack = ()
-  withCallStack () = ?stack
-  csDiscard _ = ()
-  _callStack_ w = w
-
-instance WithCallStack (Control.Monad.Log.WithCallStack α) where
-  type CSElement (Control.Monad.Log.WithCallStack α) = α
-  withCallStack = Control.Monad.Log.withCallStack
-  csDiscard w = Control.Monad.Log.discardCallStack w
-  _callStack_ w = Control.Monad.Log.msgCallStack w
-
-instance WithCallStack (CallStack, α) where
-  type CSElement (CallStack, α) = α
-  withCallStack = (?stack,)
-  csDiscard = snd
-  _callStack_ = fst
-
-instance WithCallStack (CallStack, α, β) where
-  type CSElement (CallStack,α,β) = (α,β)
-  withCallStack (a,b) = (?stack,a,b)
-  csDiscard (_,a,b)   = (a,b)
-  _callStack_ (cs,_,_)  = cs
-
-instance WithCallStack (CallStack, α, β, γ) where
-  type CSElement (CallStack,α,β,γ) = (α,β,γ)
-  withCallStack (a,b,c) = (?stack,a,b,c)
-  csDiscard (_,a,b,c)   = (a,b,c)
-  _callStack_ (cs,_,_,_)  = cs
-
 prettyCallStack ∷ [(String,SrcLoc)] → Doc ann
 prettyCallStack [] = "empty callstack"
 prettyCallStack (root:rest) =
@@ -824,14 +788,6 @@ newtype Log = Log { unLog ∷ DList LogEntry }
 
 instance Printable Log where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
-
-{-
-instance WithCallStack LogEntry where
-  type CSElement LogEntry = (Doc(),Maybe UTCTime,Severity)
-  withCallStack (txt,tm,sv) = LogEntry (popCallStack ?stack) tm sv txt
-  csDiscard (LogEntry _ tm sv txt)   = (txt,tm,sv)
-  _callStack_ (LogEntry cs _ _ _ )  = cs
--}
 
 instance HasCallstack LogEntry where
   callStack' = lens _callstack (\ le cs → le { _callstack = cs })
