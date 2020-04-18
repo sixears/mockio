@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImplicitParams             #-}
@@ -9,6 +10,13 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UnicodeSyntax              #-}
 {-# LANGUAGE ViewPatterns               #-}
+
+module MockIO
+  ( Log, WithLog, log, logIO, renderLogsSt
+
+  , assertListEq
+  )
+where
 
 import Prelude  ( undefined )
 
@@ -39,6 +47,7 @@ import GHC.Stack            ( CallStack, HasCallStack, SrcLoc
                             )
 import System.Exit          ( ExitCode )
 import System.IO            ( FilePath, IO, stderr )
+import System.IO.Unsafe     ( unsafePerformIO )
 import Text.Show            ( Show( show ) )
 
 -- base-unicode-symbols ----------------
@@ -174,7 +183,7 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 
 --------------------------------------------------------------------------------
 
--- TODO: use logMessage in logIO; logIO'→logIO; printable Log{,Entry}
+-- TODO:
 -- add logIO' to carry arbitrary data; same for log & log'; elide WithCallStack
 -- add simple logging (without io); different brackets for severity & timestamp
 -- tighten up naming; split out mocking & logging; terminal colouring
@@ -182,25 +191,46 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 -- clearer mock logging (e.g. (CMD) vs [CMD]); options handlers for logs
 -- cmd logging using showcmdforuser
 
--- Placed at the top to reduce line movements messing up the tests
-logIO ∷ (MonadIO μ, ?stack ∷ CallStack) ⇒ Severity → Text → μ LogEntry
-logIO sv txt = liftIO getCurrentTime ≫ \ tm → return $ withCallStack (pretty txt,tm,sv)
-
-logIO_ ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
+logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
          Severity → Doc () → μ ()
-logIO_ sv doc = do
+logIO' sv doc = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ withCallStack (doc,tm,sv)
+  logMessage ∘ Log ∘ singleton $ LogEntry ?stack (Just tm) sv doc
+
+{- | `WithLog` adds in the `CallStack` constraint, so that if you declare your
+     function to use this constraint, your function will be included in the
+     logged callstack.  If you do not include the `CallStack` constraint, then
+     the callpoint from within the function lacking the constraint (and anything
+     calling it) will not be shown in the callstack.
+ -}
+type WithLog   η = (MonadLog Log η, ?stack ∷ CallStack)
+{- | `WithLog`, but with MonadIO, too. -}
+type WithLogIO μ = (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack)
 
 -- We redefine this, rather than simply calling logIO_, so we don't mess with
 -- the callstack.
-logIO' ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
-         Severity → Text → μ ()
-logIO' sv txt = do
+-- logIO ∷ (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack) ⇒
+logIO ∷ WithLogIO μ ⇒ Severity → Text → μ ()
+logIO sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ withCallStack (pretty txt,tm,sv)
+  logMessage ∘ Log ∘ singleton $ LogEntry ?stack (Just tm) sv (pretty txt)
+
+log ∷ WithLog μ ⇒ Severity → Text → μ ()
+log sv txt = do
+  logMessage ∘ Log ∘ singleton $ LogEntry ?stack Nothing sv (pretty txt)
+
+
+
 
 -- test data
+_li0 ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ Text
+_li0 = logIO Informational "li0" ⪼ return "Godzilla"
+
+_li1 ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ Text
+_li1 = do
+  _li0
+  logIO Informational "li1"
+  return "MUTO"
 
 _cs0 ∷ CallStack
 _cs0 = fromCallSiteList []
@@ -216,24 +246,24 @@ _tm ∷ UTCTime
 _tm = UTCTime (fromGregorian 1970 1 1) (secondsToDiffTime 0)
 
 _le0 ∷ LogEntry
-_le0 = LogEntry _cs2 _tm Informational (pretty ("log_entry 1" ∷ Text))
+_le0 = LogEntry _cs2 (Just _tm) Informational (pretty ("log_entry 1" ∷ Text))
 
 _le1 ∷ LogEntry
 _le1 =
-  LogEntry _cs1 _tm Critical (pretty ("multi-line\nlog\nmessage" ∷ Text))
+  LogEntry _cs1 Nothing Critical (pretty ("multi-line\nlog\nmessage" ∷ Text))
 
 _le2 ∷ LogEntry
 _le2 =
   let valign = align ∘ vsep
-   in LogEntry _cs1 _tm Warning ("this is" ⊞ valign [ "a"
-                                                    , "vertically"
-                                                    ⊞ valign [ "aligned"
-                                                             , "message"
-                                                             ]
-                                                    ])
+   in LogEntry _cs1 (Just _tm) Warning ("this is" ⊞ valign [ "a"
+                                                           , "vertically"
+                                                           ⊞ valign [ "aligned"
+                                                                    , "message"
+                                                                    ]
+                                                           ])
 _le3 ∷ LogEntry
 _le3 = 
-  LogEntry _cs1 _tm Emergency (pretty ("this is the last message" ∷ Text))
+  LogEntry _cs1 Nothing Emergency (pretty ("this is the last message" ∷ Text))
 
 _log0 ∷ Log
 _log0 = Log $ fromList [_le0]
@@ -430,20 +460,6 @@ filterDocTests =
                     sdoc_internal @=? filterDocStream isInternalIO sdoc
                 ]
 
-logit ∷ IO ()
-logit = (\io -> withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg -> runLoggingT io (lg ∘ renderWithSeverity id))) (Control.Monad.Log.logInfo "mary had a little lamb")
-
-logit' ∷ (MonadIO μ, MonadMask μ) ⇒ μ ()
-logit' = (\io->withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg->runLoggingT io (lg ∘ renderLog))) (logIO Informational "log this" >>= logMessage )
-logit'' ∷ (MonadIO μ, MonadMask μ) ⇒ μ ()
-logit'' = (\io->withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg->runLoggingT io (lg ∘ renderLog'))) (logIO Informational "log this" >>= logMessage )
--- [Sat 2020-04-04Z06:37:49] [Info ] log this
---                                    logIO, called at <interactive>:375:99 in interactive:Ghci10
-
-
--- logit' ∷ IO ()
--- logit' = (\io -> withFDHandler defaultBatchingOptions stderr 0.01 5 (\lg -> runLoggingT io (lg ∘ renderWithTimestamp (formatTime defaultTimeLocale rfc822DateFormat) ∘ renderWithSeverity id))) (timestamp $ Control.Monad.Log.logInfo "mary had a little lamb")
-
 {-
 
 import qualified Data.Text.Lazy as LT
@@ -582,11 +598,11 @@ renderWithSeverity (Main.renderWithCallStack id)
 
 -}
 
-class HasUTCTime α where
-  utcTime ∷ Lens' α UTCTime
+class HasUTCTimeY α where
+  utcTimeY ∷ Lens' α (Maybe UTCTime)
 
-instance HasUTCTime UTCTime where
-  utcTime = id
+instance HasUTCTimeY (Maybe UTCTime) where
+  utcTimeY = id
 
 class HasSeverity α where
   severity ∷ Lens' α Severity
@@ -615,7 +631,7 @@ renderWithSeverity' f m =
 
 {- | Log with timestamp, callstack, severity & IOClass -}
 data LogEntry = LogEntry { _callstack ∷ CallStack
-                         , _timestamp ∷ UTCTime
+                         , _timestamp ∷ Maybe UTCTime
                          , _severity  ∷ Severity
                          , _logdoc    ∷ Doc ()
                          }
@@ -785,7 +801,7 @@ renderLogs a = do
 renderLogsSt ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogsSt a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead (view logdoc)) ⊳ unLog ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithCallStack (view logdoc)) ⊳ unLog ls
 
 {- | Performing renderLogs, with IO returning () is sufficiently common to
      warrant a cheap alias. -}
@@ -798,7 +814,7 @@ renderText = renderDoc ∘ pretty
 
 instance Printable LogEntry where
   print le =
-    P.text $ [fmt|[%t|%-4t] %t %t|] (formatUTCDoW $ le ⊣ utcTime) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (renderDoc $ le ⊣ logdoc)
+    P.text $ [fmt|[%t|%-4t] %t %t|] (formatUTCYDoW $ le ⊣ utcTimeY) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (renderDoc $ le ⊣ logdoc)
 
 newtype Log = Log { unLog ∷ DList LogEntry }
   deriving (Monoid,Semigroup,Show)
@@ -809,12 +825,13 @@ newtype Log = Log { unLog ∷ DList LogEntry }
 instance Printable Log where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
+{-
 instance WithCallStack LogEntry where
-  type CSElement LogEntry = (Doc(),UTCTime,Severity)
+  type CSElement LogEntry = (Doc(),Maybe UTCTime,Severity)
   withCallStack (txt,tm,sv) = LogEntry (popCallStack ?stack) tm sv txt
-  {-# INLINE withCallStack #-}
   csDiscard (LogEntry _ tm sv txt)   = (txt,tm,sv)
   _callStack_ (LogEntry cs _ _ _ )  = cs
+-}
 
 instance HasCallstack LogEntry where
   callStack' = lens _callstack (\ le cs → le { _callstack = cs })
@@ -822,8 +839,8 @@ instance HasCallstack LogEntry where
 instance HasSeverity LogEntry where
   severity = lens _severity (\ le sv → le { _severity = sv })
 
-instance HasUTCTime LogEntry where
-  utcTime = lens _timestamp (\ le tm → le { _timestamp = tm })
+instance HasUTCTimeY LogEntry where
+  utcTimeY = lens _timestamp (\ le tm → le { _timestamp = tm })
 
 assertEq' ∷ (Eq t, HasCallStack) ⇒ (t → Text) → t → t → Assertion
 assertEq' toT expected got =
@@ -877,18 +894,21 @@ renderWithTimestamp ∷ (UTCTime → String)
                     → (WithTimestamp a → PP.Doc ann)
 -}
 -- Add this to tfmt?
-{- | Format a UTCTime, in almost-ISO8601-without-fractional-seconds (always in Zulu). -}
-formatUTC ∷ UTCTime → Text
-formatUTC = pack ∘ formatTime defaultTimeLocale "%FZ%T"
+{- | Format a (Maybe UTCTime), in almost-ISO8601-without-fractional-seconds
+     (always in Zulu). -}
+formatUTCY ∷ Maybe UTCTime → Text
+formatUTCY (Just t) = pack $ formatTime defaultTimeLocale "%FZ%T" t
+formatUTCY Nothing  = "-------------------"
 
-{- | Format a UTCTime, in ISO8601-without-fractional-seconds (always in Zulu),
-     with a leading 3-letter day-of-week -}
-formatUTCDoW ∷ UTCTime → Text
-formatUTCDoW = pack ∘ formatTime defaultTimeLocale "%a %FZ%T"
+{- | Format a (Maybe UTCTime), in ISO8601-without-fractional-seconds (always in
+     Zulu), with a leading 3-letter day-of-week. -}
+formatUTCYDoW ∷ Maybe UTCTime → Text
+formatUTCYDoW (Just t) = pack $ formatTime defaultTimeLocale "%a %FZ%T" t
+formatUTCYDoW Nothing  = "-----------------------"
 
 
 renderWithTimestamp f m =
-  brackets (pretty (formatUTCDoW $ m ⊣ utcTime)) ⊞ align (f m)
+  brackets (pretty (formatUTCYDoW $ m ⊣ utcTimeY)) ⊞ align (f m)
 
 withResource2 ∷ IO α → (α → IO()) → IO β → (β → IO ()) → (IO α → IO β →TestTree)
               → TestTree
