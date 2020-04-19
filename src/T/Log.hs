@@ -10,23 +10,16 @@ import Data.Function           ( ($) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String )
 import Data.Tuple              ( snd )
-import GHC.Stack               ( CallStack )
 import System.Exit             ( ExitCode )
 import System.IO               ( IO )
 
 -- base-unicode-symbols ----------------
 
-import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 
 -- logging-effect ----------------------
 
-import qualified  Control.Monad.Log
 import Control.Monad.Log  ( MonadLog, Severity( Informational ) )
-
--- monadio-plus ------------------------
-
-import MonadIO  ( MonadIO )
 
 -- more-unicode ------------------------
 
@@ -37,13 +30,9 @@ import Data.MoreUnicode.Natural   ( ℕ )
 
 import Test.Tasty  ( TestTree, testGroup )
 
--- tasty-hunit -------------------------
-
-import Test.Tasty.HUnit  ( assertFailure, testCase )
-
 -- tasty-plus --------------------------
 
-import TastyPlus  ( (≟), runTestsP, runTestsReplay, runTestTree )
+import TastyPlus  ( runTestsP, runTestsReplay, runTestTree )
 
 -- text --------------------------------
 
@@ -52,6 +41,8 @@ import Data.Text  ( Text, intercalate, replicate )
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
+
+import qualified  MockIO
 
 import MockIO  ( Log, WithLog, log, renderLogsSt
                , assertListEq
@@ -88,34 +79,34 @@ _5sf = _4sf (Just "5+ stack frames")
 --                                   tests                                    --
 --------------------------------------------------------------------------------
 
-tests ∷ TestTree
-tests =
+logTests ∷ TestTree
+logTests =
   let join = intercalate "\n"
       indent n t = replicate n " " ⊕ t
       indents _ []     = ""
       indents n (t:ts) = join (t:(indent n ⊳ ts))
       exp3sf' =
         [ indents 9 [ "[Info] 3 frames of stack"
-                    , "log, called at src/T/Log.hs:67:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:68:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:72:17 in main:Main"
+                    , "log, called at src/T/Log.hs:58:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:63:17 in main:Main"
                     ]
         ]
       exp4sf' =
         [ indents 9 [ "[Info] 4 stack frames"
-                    , "log, called at src/T/Log.hs:67:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:68:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:79:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:82:9 in main:Main"
+                    , "log, called at src/T/Log.hs:58:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:73:9 in main:Main"
                     ]
         ]
       exp5sf =
         [ indents 9 [ "[Info] 5+ stack frames"
-                    , "log, called at src/T/Log.hs:67:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:68:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:79:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:85:8 in main:Main"
-                    , "  _5sf, called at src/T/Log.hs:127:62 in main:Main"
+                    , "log, called at src/T/Log.hs:58:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:76:8 in main:Main"
+                    , "  _5sf, called at src/T/Log.hs:118:62 in main:Main"
                     ]
         ]
    in testGroup "Log"
@@ -127,6 +118,9 @@ tests =
                     toList (runIdentity $ snd ⊳ renderLogsSt _5sf)
                 ]
                 
+tests ∷ TestTree
+tests = testGroup "MockIO" [ MockIO.tests, logTests]
+
 ----------------------------------------
 
 _test ∷ IO ExitCode
