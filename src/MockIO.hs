@@ -12,8 +12,9 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module MockIO
-  ( Log, WithLog, log, logIO, renderLogsSt
-
+  ( Log, WithLog, log, logIO, logRender, logRender', lroRenderers
+  , renderWithCallStack, renderWithSeverity, renderWithSeverityAndTimestamp
+  , renderWithStackHead, renderWithTimestamp
   , assertListEq
   , tests
   )
@@ -92,7 +93,7 @@ import qualified  Control.Monad.Log
 import Control.Monad.Log  ( MonadLog, PureLoggingT, Severity(..)
                           , WithSeverity( WithSeverity )
                           , defaultBatchingOptions, logMessage, timestamp
-                          , renderWithSeverity, runLoggingT, runPureLoggingT
+                          , runLoggingT, runPureLoggingT
                           , withFDHandler
                           )
 
@@ -176,7 +177,7 @@ import qualified  Text.Printer  as  P
 
 -- tfmt --------------------------------
 
-import Text.Fmt2  ( fmt )
+import Text.Fmt2  ( fmt, formatUTCYDoW )
 
 -- time --------------------------------
 
@@ -300,7 +301,7 @@ renderTests =
                                 , "    stack1, called at f:5:6 in d:e"
                                 ]
              ]
-      exp3 = [ "[Thu 1970-01-01Z00:00:00] [Info] «c#1» log_entry 1"
+      exp3 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» log_entry 1"
              , intercalate "\n" [   "[-----------------------] [CRIT] «y#9» "
                                   ⊕ "multi-line"
                                 ,   "                                       "
@@ -309,7 +310,7 @@ renderTests =
                                   ⊕ "message"
                                 ]                   
              , intercalate "\n"
-                           [ "[Thu 1970-01-01Z00:00:00] [Warn] «y#9» this is a"
+                           [ "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» this is a"
                            ,   "                                               "
                              ⊕ "vertically aligned"
                            ,   "                                               "
@@ -514,8 +515,8 @@ renderWithSeverity_ m =
                          Debug         → "Debg"
    in pp m
 
-renderWithSeverity' ∷ HasSeverity τ ⇒ (τ → Doc ρ) → τ → Doc ρ
-renderWithSeverity' f m =
+renderWithSeverity ∷ HasSeverity τ ⇒ (τ → Doc ρ) → τ → Doc ρ
+renderWithSeverity f m =
   brackets (renderWithSeverity_ m) ⊞ align (f m)
 
 renderWithSeverityAndTimestamp ∷ (HasSeverity τ, HasUTCTimeY τ) ⇒
@@ -571,32 +572,32 @@ lroRenderPlain = LogRenderOpts [] Unbounded
  -}
 lroRenderTSSev ∷ LogRenderOpts
 lroRenderTSSev =
-  LogRenderOpts [ renderWithTimestamp, renderWithSeverity' ] Unbounded
+  LogRenderOpts [ renderWithTimestamp, renderWithSeverity ] Unbounded
 
 {- | `LogRenderOpts` with severity & callstack.
  -}
 lroRenderSevCS ∷ LogRenderOpts
 lroRenderSevCS =
-  LogRenderOpts [ renderWithCallStack, renderWithSeverity' ] Unbounded
+  LogRenderOpts [ renderWithCallStack, renderWithSeverity ] Unbounded
 
 {- | `LogRenderOpts` with timestamp, severity & callstack.
  -}
 lroRenderTSSevCS ∷ LogRenderOpts
 lroRenderTSSevCS =
-  LogRenderOpts [ renderWithCallStack,renderWithTimestamp, renderWithSeverity' ]
+  LogRenderOpts [ renderWithCallStack,renderWithTimestamp, renderWithSeverity ]
                 Unbounded
 
 {- | `LogRenderOpts` with severity & callstack head.
  -}
 lroRenderSevCSH ∷ LogRenderOpts
 lroRenderSevCSH =
-  LogRenderOpts [ renderWithSeverity', renderWithStackHead ] Unbounded
+  LogRenderOpts [ renderWithSeverity, renderWithStackHead ] Unbounded
 
 {- | `LogRenderOpts` with timestamp, severity & callstack head.
  -}
 lroRenderTSSevCSH ∷ LogRenderOpts
 lroRenderTSSevCSH =
-  LogRenderOpts [ renderWithTimestamp, renderWithSeverity',renderWithStackHead ]
+  LogRenderOpts [ renderWithTimestamp, renderWithSeverity,renderWithStackHead ]
                 Unbounded
 
 lroRenderers ∷ Lens' LogRenderOpts [(LogEntry → Doc ())→ LogEntry → Doc ()]
@@ -617,8 +618,8 @@ lroRendererTests =
                            in assertListEq nme exp (T.lines $renderDoc rendered)
    in testGroup "lroRenderer"
                 [ check "plain" "log_entry 1" []
-                , check "sev" "[Info] log_entry 1" [renderWithSeverity']
-                , check "ts" "[Thu 1970-01-01Z00:00:00] log_entry 1"
+                , check "sev" "[Info] log_entry 1" [renderWithSeverity]
+                , check "ts" "[1970-01-01Z00:00:00 Thu] log_entry 1"
                              [renderWithTimestamp]
                 , check "ts" "«c#1» log_entry 1" [renderWithStackHead]
                 , checks "cs" [ "log_entry 1"
@@ -627,42 +628,42 @@ lroRendererTests =
                               ]
                              [renderWithCallStack]
                 , check "ts-sev"
-                    "[Thu 1970-01-01Z00:00:00] [Info] log_entry 1"
-                        [renderWithTimestamp,renderWithSeverity']
+                    "[1970-01-01Z00:00:00 Thu] [Info] log_entry 1"
+                        [renderWithTimestamp,renderWithSeverity]
                 , check "sev-ts"
-                    "[Info] [Thu 1970-01-01Z00:00:00] log_entry 1"
-                        [renderWithSeverity',renderWithTimestamp]
+                    "[Info] [1970-01-01Z00:00:00 Thu] log_entry 1"
+                        [renderWithSeverity,renderWithTimestamp]
                 , checks "ts-sev-cs"
-                         [ "[Thu 1970-01-01Z00:00:00] [Info] log_entry 1"
+                         [ "[1970-01-01Z00:00:00 Thu] [Info] log_entry 1"
                          ,   "                                 "
                            ⊕ "  stack0, called at c:1:2 in a:b"
                          ,   "                                 "
                            ⊕ "    stack1, called at f:5:6 in d:e"
                          ]
-                         [ renderWithTimestamp, renderWithSeverity'
+                         [ renderWithTimestamp, renderWithSeverity
                          , renderWithCallStack ]
                 , checks "cs-ts-sev"
-                         [ "[Thu 1970-01-01Z00:00:00] [Info] log_entry 1"
+                         [ "[1970-01-01Z00:00:00 Thu] [Info] log_entry 1"
                          , "  stack0, called at c:1:2 in a:b"
                          , "    stack1, called at f:5:6 in d:e"
                          ]
                          [ renderWithCallStack
-                         , renderWithTimestamp, renderWithSeverity' ]
+                         , renderWithTimestamp, renderWithSeverity ]
                 , checks "sev-cs-ts"
-                         [ "[Info] [Thu 1970-01-01Z00:00:00] log_entry 1"
+                         [ "[Info] [1970-01-01Z00:00:00 Thu] log_entry 1"
                          , "         stack0, called at c:1:2 in a:b"
                          , "           stack1, called at f:5:6 in d:e"
                          ]
-                         [ renderWithSeverity', renderWithCallStack
+                         [ renderWithSeverity, renderWithCallStack
                          , renderWithTimestamp ]
                 , checks "cs-sevts"
-                         [ "[Thu 1970-01-01Z00:00:00|Info] log_entry 1"
+                         [ "[1970-01-01Z00:00:00 Thu|Info] log_entry 1"
                          , "  stack0, called at c:1:2 in a:b"
                          , "    stack1, called at f:5:6 in d:e"
                          ]
                          [ renderWithCallStack, renderWithSeverityAndTimestamp ]
                 , checks "sh-sevts"
-                  [ "[Thu 1970-01-01Z00:00:00|Info] «c#1» log_entry 1"
+                  [ "[1970-01-01Z00:00:00 Thu|Info] «c#1» log_entry 1"
                          ]
                          [ renderWithSeverityAndTimestamp, renderWithStackHead ]
                 ]
@@ -697,12 +698,12 @@ logRender' = fmap snd ⩺ logRender
 renderLogs ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogs a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithStackHead (view LogEntry.doc)) ⊳ unLog ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity (renderWithStackHead (view LogEntry.doc)) ⊳ unLog ls
 
 renderLogsSt ∷ Monad η ⇒ PureLoggingT Log η α → η (α, DList Text)
 renderLogsSt a = do
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderDoc ∘ renderWithSeverity' (renderWithCallStack (view LogEntry.doc)) ⊳ unLog ls
+  return ∘ (a',) $ renderDoc ∘ renderWithSeverity (renderWithCallStack (view LogEntry.doc)) ⊳ unLog ls
 
 {- | Performing renderLogs, with IO returning () is sufficiently common to
      warrant a cheap alias. -}
@@ -750,25 +751,11 @@ assertListEq ∷ (Eq α, Printable α, Foldable ψ, Foldable φ, HasCallStack) �
                Text → ψ α → φ α → TestTree
 assertListEq name exp got = assertListEqIO name exp (return got)
 
-{- | Format a (Maybe UTCTime), in almost-ISO8601-without-fractional-seconds
-     (always in Zulu). -}
-formatUTCY ∷ Maybe UTCTime → Text
-formatUTCY (Just t) = pack $ formatTime defaultTimeLocale "%FZ%T" t
-formatUTCY Nothing  = "-------------------"
-
-{- | Format a (Maybe UTCTime), in ISO8601-without-fractional-seconds (always in
-     Zulu), with a leading 3-letter day-of-week. -}
-formatUTCYDoW ∷ Maybe UTCTime → Text
-formatUTCYDoW (Just t) = pack $ formatTime defaultTimeLocale "%a %FZ%T" t
-formatUTCYDoW Nothing  = "-----------------------"
-
 renderWithTimestamp_  ∷ HasUTCTimeY τ ⇒ τ → Doc ρ
-renderWithTimestamp_ m =
-  pretty (formatUTCYDoW $ m ⊣ utcTimeY)
+renderWithTimestamp_ m = pretty (formatUTCYDoW $ m ⊣ utcTimeY)
 
 renderWithTimestamp ∷ HasUTCTimeY τ ⇒ (τ → Doc ρ) → τ → Doc ρ
-renderWithTimestamp f m =
-  brackets (renderWithTimestamp_ m) ⊞ align (f m)
+renderWithTimestamp f m = brackets (renderWithTimestamp_ m) ⊞ align (f m)
 
 writerMonadTests ∷ TestTree
 writerMonadTests =

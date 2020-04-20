@@ -6,16 +6,19 @@
 
 import Control.Monad.Identity  ( runIdentity )
 import Data.Foldable           ( toList )
-import Data.Function           ( ($) )
+import Data.Function           ( ($), (&) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String )
-import Data.Tuple              ( snd )
 import System.Exit             ( ExitCode )
 import System.IO               ( IO )
 
 -- base-unicode-symbols ----------------
 
 import Data.Monoid.Unicode    ( (⊕) )
+
+-- data-default ------------------------
+
+import Data.Default  ( def )
 
 -- logging-effect ----------------------
 
@@ -24,7 +27,9 @@ import Control.Monad.Log  ( MonadLog, Severity( Informational ) )
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Functor   ( (⊳) )
+import Data.MoreUnicode.Lens      ( (⊢) )
 import Data.MoreUnicode.Natural   ( ℕ )
+
 
 -- tasty -------------------------------
 
@@ -44,7 +49,9 @@ import Data.Text  ( Text, intercalate, replicate )
 
 import qualified  MockIO
 
-import MockIO  ( Log, WithLog, log, renderLogsSt
+import MockIO  ( Log, WithLog
+               , log, logRender', lroRenderers, renderWithSeverity
+               , renderWithCallStack
                , assertListEq
                )
 
@@ -87,35 +94,39 @@ logTests =
       indents n (t:ts) = join (t:(indent n ⊳ ts))
       exp3sf' =
         [ indents 9 [ "[Info] 3 frames of stack"
-                    , "log, called at src/T/Log.hs:58:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:63:17 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
                     ]
         ]
       exp4sf' =
         [ indents 9 [ "[Info] 4 stack frames"
-                    , "log, called at src/T/Log.hs:58:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:73:9 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:77:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:80:9 in main:Main"
                     ]
         ]
       exp5sf =
         [ indents 9 [ "[Info] 5+ stack frames"
-                    , "log, called at src/T/Log.hs:58:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:59:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:76:8 in main:Main"
-                    , "  _5sf, called at src/T/Log.hs:118:62 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:77:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:83:8 in main:Main"
+                    , "  _5sf, called at src/T/Log.hs:129:50 in main:Main"
                     ]
-        ]
+        ] 
+      render = logRender' (def & lroRenderers ⊢ [ renderWithSeverity
+                                                , renderWithCallStack ])
    in testGroup "Log"
                 [ assertListEq "_3sf'" exp3sf' $
-                    toList (runIdentity $ snd ⊳ renderLogsSt _3sf')
+                    toList (runIdentity $ render _3sf')
                 , assertListEq "_4sf'" exp4sf' $
-                    toList (runIdentity $ snd ⊳ renderLogsSt _4sf')
+                    toList (runIdentity $ render _4sf')
+                , assertListEq "_4sf'" exp4sf' $
+                    toList (runIdentity $ render _4sf')
                 , assertListEq "_5sf" exp5sf $
-                    toList (runIdentity $ snd ⊳ renderLogsSt _5sf)
+                    toList (runIdentity $ render _5sf)
                 ]
                 
 tests ∷ TestTree

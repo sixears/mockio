@@ -37,7 +37,7 @@ module Text.Fmt2
     -- $formatting
 
     ByteFmtBase(..), FormatTarget(..)
-  , fmt, fmtS, fmtL, fmtT, formatBytes
+  , fmt, fmtS, fmtL, fmtT, formatBytes, formatUTCY, formatUTCYDoW
   -- for testing only
   , Token(..), conversion, fill, sprintf, tokens )
 where
