@@ -140,10 +140,6 @@ import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
                                                     )
 import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
 
--- printer -----------------------------
-
-import qualified  Text.Printer  as  P
-
 -- safe --------------------------------
 
 import Safe  ( atMay, headMay )
@@ -172,9 +168,13 @@ import qualified  Data.Text.Lazy  as  LT
 import Data.Text     ( Text, intercalate, pack, take, unlines, unpack )
 import Data.Text.IO  ( readFile )
 
+-- text-printer ------------------------
+
+import qualified  Text.Printer  as  P
+
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt )
+import Text.Fmt2  ( fmt )
 
 -- time --------------------------------
 
@@ -481,16 +481,12 @@ renderWithStackHead f m =
    in renderStackHead (stackHead m) ⊞ align (f m)
 
 locToString ∷ SrcLoc → String
-locToString loc = "«" ⊕ srcLocFile loc ⊕ "#" ⊕ show (srcLocStartLine loc) ⊕ "»"
-
+-- locToString loc = "«" ⊕ srcLocFile loc ⊕ "#" ⊕ show (srcLocStartLine loc) ⊕ "»"
+locToString loc = [fmt|«%s#%w»|] (srcLocFile loc) (srcLocStartLine loc)
+                   
 renderLocation ∷ Maybe SrcLoc → Doc α
 renderLocation (Just loc) = pretty $ locToString loc
 renderLocation Nothing    = emptyDoc
-
-stackHeadTxt ∷ HasCallstack α ⇒ α → Text
-stackHeadTxt a = case locToString ⩺ fmap snd $ stackHead a of
-                   Just s  → pack s 
-                   Nothing → ""
 
 -- class HasUTCTimeY α where
 --   utcTimeY ∷ Lens' α (Maybe UTCTime)
@@ -710,10 +706,6 @@ renderLogsSt a = do
      warrant a cheap alias. -}
 renderLogs' ∷ Monad η ⇒ PureLoggingT Log η () → η (DList Text)
 renderLogs' = snd ⩺ renderLogs
-
-instance Printable LogEntry where
-  print le =
-    P.text $ [fmt|[%t|%-4t] %t %t|] (formatUTCYDoW $ le ⊣ utcTimeY) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (renderDoc $ le ⊣ LogEntry.doc)
 
 newtype Log = Log { unLog ∷ DList LogEntry }
   deriving (Monoid,Semigroup,Show)
