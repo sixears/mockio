@@ -84,7 +84,10 @@ instance HasUTCTimeY LogEntry where
 instance Printable LogEntry where
   print le =
     let renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
-     in P.text $ [fmt|[%Z|%-4t] %t %t|] (le ⊣ utcTimeY) (take 4 ∘ pack ∘ show $ le ⊣ severity) (stackHeadTxt le) (renderDoc $ le ⊣ doc)
+     in P.text $ [fmt|[%Z|%-4t] %t %t|] (le ⊣ utcTimeY)
+                                        (take 4 ∘ pack ∘ show $ le ⊣ severity)
+                                        (stackHeadTxt le)
+                                        (renderDoc $ le ⊣ doc)
 
 logEntry ∷ CallStack → Maybe UTCTime → Severity → Doc() → LogEntry
 logEntry = LogEntry

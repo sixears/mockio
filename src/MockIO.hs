@@ -154,11 +154,13 @@ import Test.Tasty  ( TestTree, testGroup, withResource )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( Assertion, HUnitFailure( HUnitFailure ), (@=?), assertBool, testCase )
+import Test.Tasty.HUnit  ( Assertion, HUnitFailure( HUnitFailure )
+                         , (@=?), assertBool, testCase )
 
 -- tasty-plus --------------------------
 
-import TastyPlus  ( (≟), runTestsP, runTestsReplay, runTestTree, withResource' )
+import TastyPlus   ( (≟), runTestsP, runTestsReplay, runTestTree,withResource' )
+import TastyPlus2  ( withResource2' )
 
 -- text --------------------------------
 
@@ -767,16 +769,6 @@ renderWithTimestamp_ m =
 renderWithTimestamp ∷ HasUTCTimeY τ ⇒ (τ → Doc ρ) → τ → Doc ρ
 renderWithTimestamp f m =
   brackets (renderWithTimestamp_ m) ⊞ align (f m)
-
-withResource2 ∷ IO α → (α → IO()) → IO β → (β → IO ()) → (IO α → IO β →TestTree)
-              → TestTree
-withResource2 gain lose gain' lose' ts =
-  withResource gain lose (\ x → withResource gain' lose' (\ x' → ts x x'))
-
-withResource2' ∷ IO α → IO β → (IO α → IO β → TestTree)
-              → TestTree
-withResource2' gain gain' ts =
-  withResource' gain (\ x → withResource' gain' (\ x' → ts x x'))
 
 writerMonadTests ∷ TestTree
 writerMonadTests =
