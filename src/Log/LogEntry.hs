@@ -2,14 +2,17 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module Log.LogEntry
-  ( LogEntry, doc, logEntry )
+  ( LogEntry, doc, logEntry
+  , _le0, _le1, _le2, _le3 )
 where
 
 -- base --------------------------------
 
+import qualified  GHC.Stack
+
 import Data.Function  ( ($) )
-import Data.Maybe     ( Maybe )
-import GHC.Stack      ( CallStack )
+import Data.Maybe     ( Maybe( Just, Nothing ) )
+import GHC.Stack      ( CallStack, fromCallSiteList )
 import Text.Show      ( Show( show ) )
 
 -- base-unicode-symbols ----------------
@@ -26,7 +29,8 @@ import Control.Lens.Lens  ( Lens', lens )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( Severity )
+import Control.Monad.Log  ( Severity( Critical, Emergency, Informational
+                                    , Warning ) )
 
 -- more-unicode ------------------------
 
@@ -34,13 +38,13 @@ import Data.MoreUnicode.Lens  ( (⊣) )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc              ( Doc, defaultLayoutOptions
-                                              , layoutPretty )
+import Data.Text.Prettyprint.Doc              ( Doc, (<+>), align, defaultLayoutOptions
+                                              , layoutPretty, pretty, vsep )
 import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
 
 -- text --------------------------------
 
-import Data.Text  ( pack, take )
+import Data.Text  ( Text, pack, take )
 
 -- text-printer ------------------------
 
@@ -52,7 +56,8 @@ import Text.Fmt2  ( fmt )
 
 -- time --------------------------------
 
-import Data.Time.Clock  ( UTCTime )
+import Data.Time.Calendar  ( fromGregorian )
+import Data.Time.Clock     ( UTCTime( UTCTime ), secondsToDiffTime )
 
 ------------------------------------------------------------
 --                     local imports                      --
@@ -94,5 +99,45 @@ logEntry = LogEntry
 
 doc ∷ Lens' LogEntry (Doc ())
 doc = lens _logdoc (\ le txt → le { _logdoc = txt })
+
+-- test data -------------------------------------------------------------------
+
+_cs0 ∷ CallStack
+_cs0 = fromCallSiteList []
+
+_cs1 ∷ CallStack
+_cs1 = fromCallSiteList [ ("stack0",GHC.Stack.SrcLoc "z" "x" "y" 9 8 7 6) ]
+
+_cs2 ∷ CallStack
+_cs2 = fromCallSiteList [ ("stack0",GHC.Stack.SrcLoc "a" "b" "c" 1 2 3 4)
+                        , ("stack1",GHC.Stack.SrcLoc "d" "e" "f" 5 6 7 8) ]
+
+_tm ∷ UTCTime
+_tm = UTCTime (fromGregorian 1970 1 1) (secondsToDiffTime 0)
+
+_le0 ∷ LogEntry
+_le0 = logEntry _cs2 (Just _tm) Informational (pretty ("log_entry 1" ∷ Text))
+
+_le1 ∷ LogEntry
+_le1 =
+  logEntry _cs1 Nothing Critical (pretty ("multi-line\nlog\nmessage" ∷ Text))
+
+infixr 5 ⊞
+-- hsep
+(⊞) ∷ Doc α → Doc α → Doc α
+(⊞) = (<+>)
+
+_le2 ∷ LogEntry
+_le2 =
+  let valign = align ∘ vsep
+   in logEntry _cs1 (Just _tm) Warning ("this is" ⊞ valign [ "a"
+                                                           , "vertically"
+                                                           ⊞ valign [ "aligned"
+                                                                    , "message"
+                                                                    ]
+                                                           ])
+_le3 ∷ LogEntry
+_le3 = 
+  logEntry _cs1 Nothing Emergency (pretty ("this is the last message" ∷ Text))
 
 -- that's all, folks! ----------------------------------------------------------

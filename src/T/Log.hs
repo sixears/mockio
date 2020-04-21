@@ -37,7 +37,8 @@ import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-plus --------------------------
 
-import TastyPlus  ( runTestsP, runTestsReplay, runTestTree )
+import TastyPlus   ( runTestsP, runTestsReplay, runTestTree )
+import TastyPlus2  ( assertListEq )
 
 -- text --------------------------------
 
@@ -49,11 +50,10 @@ import Data.Text  ( Text, intercalate, replicate )
 
 import qualified  MockIO
 
-import MockIO  ( Log, WithLog
-               , log, logRender', lroRenderers, renderWithSeverity
-               , renderWithCallStack
-               , assertListEq
-               )
+import Log  ( Log, WithLog
+            , log, logRender'
+            )
+import Log.LogRenderOpts  ( lroRenderers, renderWithSeverity, renderWithCallStack )
 
 --------------------------------------------------------------------------------
 
