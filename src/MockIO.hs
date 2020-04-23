@@ -1,15 +1,8 @@
--- {-# LANGUAGE ConstraintKinds            #-}
-{-# LANGUAGE DeriveFunctor              #-}
--- {-# LANGUAGE GeneralizedNewtypeDeriving #-}
--- {-# LANGUAGE ImplicitParams             #-}
-{-# LANGUAGE InstanceSigs               #-}
-{-# LANGUAGE NoImplicitPrelude          #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE UnicodeSyntax              #-}
--- {-# LANGUAGE ViewPatterns               #-}
+{-# LANGUAGE DeriveFunctor     #-}
+{-# LANGUAGE InstanceSigs      #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO
   ( tests )
@@ -181,7 +174,8 @@ mkPIO = Cmd
 data Mock = DoMock | NoMock
   deriving (Eq,Show)
 
-mkIO' ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
+-- mkIO' ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
+mkIO' ∷ (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
 mkIO' log mock_value io mock = do
   logMessage (log mock)
   case mock of
