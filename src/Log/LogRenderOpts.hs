@@ -42,44 +42,37 @@ import Control.Lens  ( Lens', lens, view )
 
 -- logging-effect ----------------------
 
-import qualified  Control.Monad.Log
-import Control.Monad.Log  ( MonadLog, PureLoggingT
-                          , Severity( Alert, Debug, Critical, Emergency
+import Control.Monad.Log  ( Severity( Alert, Debug, Critical, Emergency, Error
                                     , Informational, Notice, Warning ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Functor  ( (⊳), (⩺) )
+import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣) )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
-                                  , PageWidth( AvailablePerLine, Unbounded )
-                                  , Pretty
-                                  , SimpleDocStream(..)
+                                  , PageWidth( Unbounded )
                                   , (<+>)
-                                  , align, annotate, brackets
-                                  , defaultLayoutOptions, emptyDoc, enclose
-                                  , hsep, indent, layoutPageWidth, layoutPretty
-                                  , line, pretty
-                                  , space, vsep
+                                  , align, brackets, defaultLayoutOptions
+                                  , emptyDoc, indent, layoutPageWidth
+                                  , layoutPretty, line, pretty, vsep
                                   )
 import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
 
 -- tasty -------------------------------
 
-import Test.Tasty  ( TestTree, testGroup, withResource )
+import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( Assertion, HUnitFailure( HUnitFailure )
-                         , (@=?), assertBool, testCase )
+import Test.Tasty.HUnit  ( testCase )
 
 -- tasty-plus --------------------------
 
-import TastyPlus   ( (≟), runTestsP, runTestsReplay, runTestTree,withResource' )
+import TastyPlus   ( (≟), runTestsP, runTestsReplay, runTestTree )
 import TastyPlus2  ( assertListEq )
 
 -- text --------------------------------
@@ -254,6 +247,7 @@ renderWithSeverity_ m =
                          Emergency     → ("EMRG" ∷ Text)
                          Alert         → "ALRT"
                          Critical      → "CRIT"
+                         Error         → "Erro"
                          Warning       → "Warn"
                          Notice        → "Note"
                          Informational → "Info"
@@ -267,17 +261,7 @@ renderWithSeverity f m =
 renderWithSeverityAndTimestamp ∷ (HasSeverity τ, HasUTCTimeY τ) ⇒
                                  (τ → Doc ρ) → τ → Doc ρ
 renderWithSeverityAndTimestamp f m =
-  let pp ∷ HasSeverity α ⇒ α → Doc ann
-      pp sv = pretty $ case sv ⊣ severity of
-                         Emergency     → ("EMRG" ∷ Text)
-                         Alert         → "ALRT"
-                         Critical      → "CRIT"
-                         Warning       → "Warn"
-                         Notice        → "Note"
-                         Informational → "Info"
-                         Debug         → "Debg"
-   in   brackets (renderWithTimestamp_ m ⊕ "|" ⊕ renderWithSeverity_ m)
-      ⊞ align (f m)
+  brackets (renderWithTimestamp_ m ⊕ "|" ⊕ renderWithSeverity_ m) ⊞ align (f m)
 
 prettyCallStack ∷ [(String,SrcLoc)] → Doc ann
 prettyCallStack [] = "empty callstack"

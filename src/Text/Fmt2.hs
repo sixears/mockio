@@ -109,7 +109,7 @@ import Data.Text  ( Text, dropWhileEnd, pack, unpack )
 
 -- time --------------------------------
 
-import Data.Time.Clock   ( UTCTime( UTCTime ) )
+import Data.Time.Clock   ( UTCTime )
 import Data.Time.Format  ( defaultTimeLocale, formatTime )
 
 ------------------------------------------------------------
@@ -243,15 +243,16 @@ instance UTCTimeY (Maybe UTCTime) where
 {- | Format a (Maybe UTCTime), in almost-ISO8601-without-fractional-seconds
      (always in Zulu). -}
 formatUTCY ∷ UTCTimeY α ⇒ α → Text
-formatUTCY (toUTCTimeY → Just t)  = pack $ formatTime defaultTimeLocale "%FZ%T" t
-formatUTCY (toUTCTimeY → Nothing) = "-------------------"
+formatUTCY mt = case toUTCTimeY mt of
+                  Just t  → pack $ formatTime defaultTimeLocale "%FZ%T" t
+                  Nothing → "-------------------"
 
 {- | Format a (Maybe UTCTime), in ISO8601-without-fractional-seconds (always in
      Zulu), with a leading 3-letter day-of-week. -}
 formatUTCYDoW ∷ UTCTimeY α ⇒ α → Text
-formatUTCYDoW (toUTCTimeY → Just t) =
-  pack $ formatTime defaultTimeLocale "%FZ%T %a" t
-formatUTCYDoW (toUTCTimeY → Nothing)  = "-----------------------"
+formatUTCYDoW mt = case toUTCTimeY mt of
+                     Just t  → pack $ formatTime defaultTimeLocale "%FZ%T %a" t
+                     Nothing → "-----------------------"
 
 toFormatUTC ∷ UTCTimeY α ⇒ Format ρ (α → ρ)
 toFormatUTC = later $ LazyBuilder.fromText . formatUTCY

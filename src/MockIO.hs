@@ -15,36 +15,19 @@ module MockIO
   ( tests )
 where
 
-import Prelude  ( undefined )
-
 -- base --------------------------------
-
-import qualified  Control.Exception  as  E
-import qualified  GHC.Stack
 
 import Data.Bool            ( Bool( False, True ), not, otherwise )
 import Control.Applicative  ( Applicative, (<*>), pure )
-import Control.Monad        ( Monad, (>>=), mapM, return, unless )
-import Control.Monad.Catch  ( MonadMask )
-import Control.Monad.Identity  ( runIdentity )
+import Control.Monad        ( Monad, (>>=), return )
 import Data.Eq              ( Eq )
-import Data.Foldable        ( Foldable, foldr, mapM_, toList )
-import Data.Function        ( ($), (&), const, flip, id )
+import Data.Function        ( ($), const, id )
 import Data.Functor         ( Functor, fmap )
-import Data.List            ( zip )
-import Data.Maybe           ( Maybe( Just, Nothing ) )
-import Data.Monoid          ( Monoid( mappend, mconcat, mempty ) )
-import Data.Semigroup       ( Semigroup( (<>), sconcat, stimes ) )
-import Data.String          ( String, lines )
-import Data.Tuple           ( fst, snd )
+import Data.Monoid          ( Monoid )
+import Data.String          ( String )
 import GHC.Exts             ( fromList )
-import GHC.Stack            ( CallStack, HasCallStack, SrcLoc
-                            , fromCallSiteList, getCallStack, popCallStack
-                            , srcLocFile, srcLocStartLine
-                            )
 import System.Exit          ( ExitCode )
-import System.IO            ( FilePath, IO, stderr )
-import System.IO.Unsafe     ( unsafePerformIO )
+import System.IO            ( FilePath, IO )
 import Text.Show            ( Show( show ) )
 
 -- base-unicode-symbols ----------------
@@ -53,63 +36,35 @@ import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 
--- data-default ------------------------
-
-import Data.Default  ( Default( def ) )
-
--- data-textual ------------------------
-
-import Data.Textual  ( Printable( print ), toText, toString )
-
 -- dlist -------------------------------
 
-import Data.DList  ( DList, singleton )
-
--- fluffy ------------------------------
-
-import Fluffy.Foldable  ( length )
+import Data.DList  ( DList )
 
 -- lens --------------------------------
 
-import Control.Lens  ( Lens', lens, view )
+import Control.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
 import qualified  Log
-import qualified  Log.LogEntry       as  LogEntry
 import qualified  Log.LogRenderOpts
 
-import Log                ( Log, logIO, logRender, _log0m, _log1m )
-import Log.HasCallstack   ( HasCallstack( callstack ), stackHead )
-import Log.HasSeverity    ( HasSeverity( severity ) )
-import Log.HasUTCTime     ( HasUTCTimeY( utcTimeY ) )
-import Log.LogEntry       ( LogEntry, logEntry, _le0, _le1, _le2, _le3 )
-import Log.LogRenderOpts  ( LogRenderOpts )
+import Log  ( Log, logIO )
 
 -- logging-effect ----------------------
 
-import qualified  Control.Monad.Log
-import Control.Monad.Log  ( MonadLog, PureLoggingT, Severity(..)
-                          , WithSeverity( WithSeverity )
-                          , defaultBatchingOptions, logMessage, timestamp
-                          , runLoggingT, runPureLoggingT
-                          , withFDHandler
-                          )
+import Control.Monad.Log  ( MonadLog, Severity(..), WithSeverity( WithSeverity )
+                          , logMessage, runLoggingT, runPureLoggingT )
 
 -- monadio-plus ------------------------
 
-import MonadIO  ( MonadIO, liftIO, say )
-
--- mono-traversable --------------------
-
-import Data.MonoTraversable  ( Element, MonoFunctor( omap ) )
+import MonadIO  ( MonadIO, liftIO )
 
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
-import Data.MoreUnicode.Functor  ( (⊳), (⩺) )
-import Data.MoreUnicode.Lens     ( (⊣), (⊢) )
-import Data.MoreUnicode.Monad    ( (⪼), (≫) )
+import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Monad    ( (⪼) )
 import Data.MoreUnicode.Monoid   ( ф, ю )
 import Data.MoreUnicode.Natural  ( ℕ )
 
@@ -122,27 +77,14 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
-                                  , PageWidth( AvailablePerLine, Unbounded )
-                                  , Pretty
-                                  , SimpleDocStream(..)
-                                  , (<+>)
-                                  , align, annotate, brackets
-                                  , defaultLayoutOptions, emptyDoc, enclose
-                                  , hsep, indent, layoutPageWidth, layoutPretty
-                                  , line, pretty
-                                  , space, vsep
+import Data.Text.Prettyprint.Doc  ( SimpleDocStream(..)
+                                  , annotate, defaultLayoutOptions, hsep
+                                  , layoutPretty, line
                                   )
-import Data.Text.Prettyprint.Doc.Util  ( reflow )
 import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
                                                     , panicUncaughtFail
                                                     , panicUnpairedPop
                                                     )
-import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
-
--- safe --------------------------------
-
-import Safe  ( atMay, headMay )
 
 -- streaming ---------------------------
 
@@ -150,40 +92,23 @@ import Streaming.Prelude  ( Of, Stream )
 
 -- tasty -------------------------------
 
-import Test.Tasty  ( TestTree, testGroup, withResource )
+import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( Assertion, HUnitFailure( HUnitFailure )
-                         , (@=?), assertBool, testCase )
+import Test.Tasty.HUnit  ( (@=?), testCase )
 
 -- tasty-plus --------------------------
 
 import TastyPlus   ( (≟), runTestsP, runTestsReplay, runTestTree,withResource' )
-import TastyPlus2  ( assertListEq, withResource2' )
+import TastyPlus2  ( withResource2' )
 
 -- text --------------------------------
 
 import qualified  Data.Text       as  T
-import qualified  Data.Text.Lazy  as  LT
 
-import Data.Text     ( Text, intercalate, pack, take, unlines, unpack )
+import Data.Text     ( Text, pack )
 import Data.Text.IO  ( readFile )
-
--- text-printer ------------------------
-
-import qualified  Text.Printer  as  P
-
--- tfmt --------------------------------
-
-import Text.Fmt2  ( fmt, formatUTCYDoW )
-
--- time --------------------------------
-
-import Data.Time.Calendar  ( fromGregorian )
-import Data.Time.Clock     ( UTCTime( UTCTime ), getCurrentTime
-                           , secondsToDiffTime )
-import Data.Time.Format    ( defaultTimeLocale, formatTime, rfc822DateFormat )
 
 ------------------------------------------------------------
 --                     local imports                      --
@@ -210,7 +135,7 @@ _li0 = logIO Informational "li0" ⪼ return "Godzilla"
 
 _li1 ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ Text
 _li1 = do
-  _li0
+  _ ← _li0
   logIO Informational "li1"
   return "MUTO"
 
@@ -228,7 +153,6 @@ instance (Monad η) ⇒ Applicative (ProcIO' ε η) where
   pure = Cmd ∘ pure
   (<*>) ∷ ProcIO' ε η (α → β) → ProcIO' ε η α → ProcIO' ε η β
   Cmd f <*> Cmd xs = Cmd (f <*> xs)
-
 
 instance Monad η ⇒ Monad (ProcIO' ε η) where
   Cmd c >>=  f = Cmd (c >>=  unCmd ∘ f)
@@ -362,17 +286,6 @@ filterDocTests =
 -- instance HasUTCTimeY (Maybe UTCTime) where
 --   utcTimeY = id
 
-infixr 5 ⊞
--- hsep
-(⊞) ∷ Doc α → Doc α → Doc α
-(⊞) = (<+>)
-
-
-
-{- | Render an instance of a `Pretty` type to text, with default options. -}
-renderDoc ∷ Doc α → Text
-renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
-
 data LogRenderType = LRO_Plain
                    | LRO_Severity
                    | LRO_TimeStamp
@@ -381,14 +294,6 @@ data LogRenderType = LRO_Plain
                    | LRO_Stack
                    | LRO_StackTS
   deriving Show
-
-     
-{- | Render logs to stderr. -}
-logsToStderr ∷ MonadIO μ ⇒ LogRenderOpts → PureLoggingT Log μ α → μ α
-logsToStderr opts io = do
-  (x,ts) ← logRender opts io
-  mapM_ say ts
-  return x
 
 writerMonadTests ∷ TestTree
 writerMonadTests =
