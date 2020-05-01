@@ -7,12 +7,12 @@
 {-# LANGUAGE UnicodeSyntax              #-}
 
 module Log
-  ( Log, WithLog, WithLogIO, log, log', logIO, logIO', logRender, logRender'
+  ( Log, WithLog, WithLogIO
+  , log, log', logIO, logIO', logRender, logRender'
+  , logToFD', logToFD, logToFile
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
 where
-
-import Prelude  ( undefined )
 
 -- base --------------------------------
 
@@ -38,10 +38,6 @@ import Text.Show               ( Show )
 
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-
--- data-default ------------------------
-
-import Data.Default  ( def )
 
 -- data-textual ------------------------
 
@@ -127,7 +123,7 @@ import Data.Time.Clock     ( getCurrentTime )
 import Log.LogEntry       ( LogEntry, logEntry, _le0, _le1, _le2, _le3  )
 import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
                           , logRenderOpts', lroOpts, lroRenderer
-                          , lroRendererAnsi, lroRenderPlain
+                          , lroRendererAnsi
                           , lroRenderSevCS, lroRenderTSSevCSH, lroWidth
                           , renderLogWithCallStack, renderLogWithSeverity
                           , renderLogWithStackHead, renderLogWithTimestamp
@@ -291,18 +287,6 @@ logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
 logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
                                         (lroRendererAnsi lro) bopts
                                         (lro ⊣ lroWidth)
---------------------
-
-{- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
-     batch time; else go unadorned with higher batch time. -}
-logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
-           BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α → μ α
-logToFD' bopts lro h io = do
-  isatty ← liftIO $ hIsTerminalDevice h
-  if isatty
-  then logToHandleAnsi         bopts lro h io
-  else logToHandleNoAdornments bopts lro h io
-
 ----------------------------------------
 
 {- | Log to a regular file, with unbounded width. -}
@@ -326,11 +310,11 @@ logToTTY' ls h io = do
 
 --------------------
 
-{- | Log to a file handle; if it looks like a terminal, use Ansi logging and
-     current terminal width; else go unadorned with unbounded width. -}
-logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
-          [LogAnnotator] → Handle → LoggingT Log μ α → μ α
-logToFD ls h io = do
+{- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
+     batch time; else go unadorned with higher batch time. -}
+logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
+           [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToFD' ls h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
   then logToTTY'  ls h io
@@ -363,6 +347,18 @@ logToTTY CallStackHead =
 logToTTY FullCallStack =
   logToTTY' [ renderLogWithCallStack, renderLogWithTimestamp
             , renderLogWithSeverity ]
+
+--------------------
+
+{- | Log to a file handle; if it looks like a terminal, use Ansi logging and
+     current terminal width; else go unadorned with unbounded width. -}
+logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
+          CSOpt → Handle → LoggingT Log μ α → μ α
+logToFD cso h io = do
+  isatty ← liftIO $ hIsTerminalDevice h
+  if isatty
+  then logToTTY  cso h io
+  else logToFile cso h io
 
 ----------------------------------------
 
