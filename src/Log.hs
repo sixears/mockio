@@ -104,6 +104,10 @@ import Test.Tasty  ( TestTree, testGroup )
 import TastyPlus   ( runTestsP, runTestsReplay, runTestTree )
 import TastyPlus2  ( assertListEq, assertListEqIO )
 
+-- terminal-size -----------------------
+
+import qualified  System.Console.Terminal.Size  as  TerminalSize
+
 -- text --------------------------------
 
 import Data.Text  ( Text, intercalate, unlines )
@@ -252,6 +256,7 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 100_000
 
 ----------------------------------------
 
+{- | Write a Log to a filehandle, with given rendering and options. -}
 logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
               (Handle → SimpleDocStream ρ → IO()) -- ^ write an SDSρ to Handle
             → (LogEntry → Doc ρ)                  -- ^ render a LogEntry
@@ -267,47 +272,62 @@ logToHandle renderIO renderEntry bopts width fh io =
 
 --------------------
 
-logToHandlePlain ∷ (MonadIO μ, MonadMask μ) ⇒
-                   BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α
-                 → μ α
-logToHandlePlain bopts lro = logToHandle RenderText.renderIO (lroRenderer lro)
-                                         bopts (lro ⊣ lroWidth)
+{- | Write a Log to a filehandle, with given options but no adornments. -}
+logToHandleNoAdornments ∷ (MonadIO μ, MonadMask μ) ⇒
+                          BatchingOptions
+                        → LogRenderOpts
+                        → Handle
+                        → LoggingT Log μ α
+                        → μ α
+logToHandleNoAdornments bopts lro =
+  logToHandle RenderText.renderIO (lroRenderer lro) bopts (lro ⊣ lroWidth)
 
 --------------------
 
+{- | Write a Log to a filehandle, with given options and Ansi adornments. -}
 logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
                   BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α
                 → μ α
 logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
                                         (lroRendererAnsi lro) bopts
                                         (lro ⊣ lroWidth)
-
-----------------------------------------
-
-logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
-logToFile' ls = let lro = logRenderOpts' ls (AvailablePerLine 80 0.8)
-                 in logToHandlePlain fileBatchingOptions lro
-
 --------------------
 
-logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
-logToTTY' ls = let lro = logRenderOpts' ls Unbounded
-                in logToHandleAnsi ttyBatchingOptions lro
-
---------------------
-
+{- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
+     batch time; else go unadorned with higher batch time. -}
 logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
            BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α → μ α
 logToFD' bopts lro h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
-  then logToHandleAnsi  bopts lro h io
-  else logToHandlePlain bopts lro h io
+  then logToHandleAnsi         bopts lro h io
+  else logToHandleNoAdornments bopts lro h io
+
+----------------------------------------
+
+{- | Log to a regular file, with unbounded width. -}
+logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
+            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToFile' ls = let lro = logRenderOpts' ls Unbounded
+                 in logToHandleNoAdornments fileBatchingOptions lro
 
 --------------------
 
+{- | Log to a tty, using current terminal width. -}
+logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
+            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToTTY' ls h io = do
+  size ← liftIO $ TerminalSize.size
+  let lro = case size of
+              Just sz → let width = AvailablePerLine (TerminalSize.width sz) 1.0
+                         in logRenderOpts' ls width
+              Nothing → logRenderOpts' ls Unbounded
+  logToHandleAnsi ttyBatchingOptions lro h io
+
+--------------------
+
+{- | Log to a file handle; if it looks like a terminal, use Ansi logging and
+     current terminal width; else go unadorned with unbounded width. -}
 logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
           [LogAnnotator] → Handle → LoggingT Log μ α → μ α
 logToFD ls h io = do
@@ -320,6 +340,7 @@ logToFD ls h io = do
 
 data CSOpt = NoCallStack | CallStackHead | FullCallStack
 
+{- | Log to a plain file with given callstack choice. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
 logToFile NoCallStack   =
   logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ]
@@ -332,6 +353,7 @@ logToFile FullCallStack =
 
 --------------------
 
+{- | Log to a terminal with given callstack choice. -}
 logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
 logToTTY NoCallStack   =
   logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ]
@@ -344,8 +366,12 @@ logToTTY FullCallStack =
 
 ----------------------------------------
 
+{- | Log to stderr, assuming it's a terminal, with given callstack choice. -}
+logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → LoggingT Log μ α → μ α
 logToStderr cso = logToTTY cso stderr
 
+{- | Log to a handle, assuming it's a terminal, with no log decorations. -}
+logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒ Handle → LoggingT Log μ α → μ α
 logToTTYPlain = logToTTY' []
 
 --------------------------------------------------------------------------------
