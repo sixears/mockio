@@ -48,6 +48,9 @@ import Data.Text  ( Text, intercalate, replicate )
 
 import qualified  MockIO
 
+import qualified  Log
+import qualified  Log.LogRenderOpts
+
 import Log                ( Log, WithLog, log, logRender' )
 import Log.LogRenderOpts  ( logRenderOpts', renderLogWithSeverity
                           , renderLogWithCallStack )
@@ -91,26 +94,26 @@ logTests =
       indents n (t:ts) = join (t:(indent n ⊳ ts))
       exp3sf' =
         [ indents 9 [ "[Info] 3 frames of stack"
-                    , "log, called at src/T/Log.hs:62:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:63:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:67:17 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:70:17 in main:Main"
                     ]
         ]
       exp4sf' =
         [ indents 9 [ "[Info] 4 stack frames"
-                    , "log, called at src/T/Log.hs:62:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:63:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:74:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:77:9 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:77:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:80:9 in main:Main"
                     ]
         ]
       exp5sf =
         [ indents 9 [ "[Info] 5+ stack frames"
-                    , "log, called at src/T/Log.hs:62:33 in main:Main"
-                    , "  _sf_plus_2, called at src/T/Log.hs:63:20 in main:Main"
-                    , "  _sf_plus_3, called at src/T/Log.hs:74:17 in main:Main"
-                    , "  _4sf, called at src/T/Log.hs:80:8 in main:Main"
-                    , "  _5sf, called at src/T/Log.hs:126:50 in main:Main"
+                    , "log, called at src/T/Log.hs:65:33 in main:Main"
+                    , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
+                    , "  _sf_plus_3, called at src/T/Log.hs:77:17 in main:Main"
+                    , "  _4sf, called at src/T/Log.hs:83:8 in main:Main"
+                    , "  _5sf, called at src/T/Log.hs:129:50 in main:Main"
                     ]
         ] 
       render = logRender' (logRenderOpts' [ renderLogWithSeverity
@@ -127,7 +130,8 @@ logTests =
                 ]
                 
 tests ∷ TestTree
-tests = testGroup "MockIO" [ MockIO.tests, logTests]
+tests = testGroup "MockIO" [ MockIO.tests, Log.tests
+                           , Log.LogRenderOpts.tests, logTests]
 
 ----------------------------------------
 

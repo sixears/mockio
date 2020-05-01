@@ -39,9 +39,6 @@ import Control.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import qualified  Log
-import qualified  Log.LogRenderOpts
-
 import Log  ( Log, logIO )
 
 -- logging-effect ----------------------
@@ -417,18 +414,13 @@ _renderSimplyDecorated text push pop = go []
     go (ann:stack) (SAnnPop rest)      = pop ann ⊕ go stack rest
     go []          SAnnPop{}           = panicUnpairedPop
 
--- λ> let sdoc = layoutPretty defaultLayoutOptions ("hello" <+> annotate IORead "world" <+> annotate IOWrite "and mum" <> "!")
--- λ> Data.Text.IO.putStrLn (Main.renderSimplyDecorated id (\ _ -> ">>>") (\ _ -> "<<<") sdoc)
-
-
 --------------------------------------------------------------------------------
 --                                   tests                                    --
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
 tests = testGroup "MockIO" [ filterDocTests, writerMonadTests, pureLoggingTests
-                           , logMsgTests, Log.tests
-                           , Log.LogRenderOpts.tests
+                           , logMsgTests
                            ]
 
 ----------------------------------------
