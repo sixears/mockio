@@ -12,12 +12,14 @@ module Log
   , tests, _log0, _log0m, _log1, _log1m )
 where
 
+import Prelude  ( undefined )
+
 -- base --------------------------------
 
 import Control.Concurrent      ( threadDelay )
 import Control.Monad           ( Monad, return )
 import Control.Monad.Identity  ( runIdentity )
-import Data.Bool               ( Bool( False ) )
+import Data.Bool               ( Bool( False, True ) )
 import Data.Foldable           ( Foldable
                                , foldl', foldl1, foldMap, foldr, foldr1,toList )
 import Data.Function           ( ($) )
@@ -29,7 +31,7 @@ import Data.String             ( String )
 import Data.Tuple              ( snd )
 import GHC.Stack               ( CallStack )
 import System.Exit             ( ExitCode )
-import System.IO               ( Handle, IO, hFlush, stderr )
+import System.IO               ( Handle, IO, hFlush, hIsTerminalDevice, stderr )
 import Text.Show               ( Show )
 
 -- base-unicode-symbols ----------------
@@ -79,15 +81,19 @@ import Data.MonoTraversable  ( Element
 
 import Data.MoreUnicode.Functor  ( (⊳), (⩺) )
 import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Monad    ( (⪼) )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
+import qualified  Data.Text.Prettyprint.Doc.Render.Terminal  as  RenderTerminal
+import qualified  Data.Text.Prettyprint.Doc.Render.Text      as  RenderText
+
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
-                                  , PageWidth, SimpleDocStream(..)
+                                  , PageWidth( AvailablePerLine, Unbounded )
+                                  , SimpleDocStream(..)
                                   , layoutPretty, line', pretty, vsep
                                   )
-import Data.Text.Prettyprint.Doc.Render.Text  ( renderIO, renderStrict )
 
 -- tasty -------------------------------
 
@@ -115,11 +121,17 @@ import Data.Time.Clock     ( getCurrentTime )
 ------------------------------------------------------------
 
 import Log.LogEntry       ( LogEntry, logEntry, _le0, _le1, _le2, _le3  )
-import Log.LogRenderOpts  ( LogRenderOpts, lroOpts, lroRenderer, lroRenderSevCS
-                          , lroRenderTSSevCSH, lroWidth )
+import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
+                          , logRenderOpts', lroOpts, lroRenderer
+                          , lroRendererAnsi, lroRenderPlain
+                          , lroRenderSevCS, lroRenderTSSevCSH, lroWidth
+                          , renderLogWithCallStack, renderLogWithSeverity
+                          , renderLogWithStackHead, renderLogWithTimestamp
+                          )
 
 --------------------------------------------------------------------------------
 
+{- | A list of LogEntries. -}
 newtype Log = Log { unLog ∷ DList LogEntry }
   deriving (Monoid,Semigroup,Show)
 
@@ -149,11 +161,15 @@ instance MonoFunctor Log where
 instance Printable Log where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
+------------------------------------------------------------
+
 {- | Log a `Doc()` with a timestamp, thus causing IO. -}
 logIO' ∷ WithLogIO μ ⇒ Severity → Doc () → μ ()
 logIO' sv doc = do
   tm ← liftIO getCurrentTime
   logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv doc
+
+--------------------
 
 -- We redefine this, rather than simply calling logIO', so as to not mess with
 -- the callstack.
@@ -163,51 +179,66 @@ logIO sv txt = do
   tm ← liftIO getCurrentTime
   logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt)
 
+----------------------------------------
+
 {- | Log with no IO, thus no timestamp. -}
 log ∷ WithLog μ ⇒ Severity → Text → μ ()
 log sv txt = do
   logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt)
+
+--------------------
 
 {- | Log a `Doc()` with no IO, thus no timestamp. -}
 log' ∷ WithLog μ ⇒ Severity → Doc() → μ ()
 log' sv doc = do
   logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv doc
 
+----------------------------------------
+
+{- | Transform a monad ready to return (rather than effect) the logging. -}
 logRender ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η α → η (α, DList Text)
 logRender opts a = do
   let renderer = lroRenderer opts
   (a',ls) ← runPureLoggingT a
-  return ∘ (a',) $ renderStrict ∘ layoutPretty (opts ⊣ lroOpts) ∘ renderer ⊳ unLog ls
+  let lpretty ∷ Doc ρ → SimpleDocStream ρ
+      lpretty = layoutPretty (opts ⊣ lroOpts)
+      txt = RenderText.renderStrict ∘ lpretty ∘ renderer ⊳ unLog ls
+  return $ (a', txt)
+
+--------------------
 
 {- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
 logRender' ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η () → η (DList Text)
 logRender' = fmap snd ⩺ logRender
 
-{- | Create a new Handler that will append to a given `Handle`.  Note that this
-     Handler requires log messages to be of type `PP.Doc`. This abstractly
-     specifies a pretty-printing for log lines. The additional arguments to
-     `withFDHandler` determine how this pretty-printing should be realised when
-     outputting log lines.
-  
-     These Handlers asynchronously log messages to the given file descriptor,
-     rather than blocking.
+----------------------------------------
+
+{- | How to write to an FD with given options, using `withBatchedHandler`.
+     Each `Doc` is vertically separated.
  -}
-withFDHandler ∷ (MonadIO μ,MonadMask μ) ⇒ BatchingOptions → Handle → PageWidth
-                                        → (Handler μ (Doc ρ) -> μ α) → μ α
-withFDHandler options fd pw =
+withFDHandler ∷ (MonadIO μ, MonadMask μ) ⇒
+                (Handle → SimpleDocStream ρ → IO ())
+              → PageWidth
+              → BatchingOptions
+              → Handle
+              → (Handler μ (Doc ρ) -> μ α)
+              → μ α
+withFDHandler r pw bopts fd handler =
   let layout ∷ (Foldable ψ) ⇒ ψ (Doc π) → SimpleDocStream π
       layout ms = layoutPretty (LayoutOptions pw) (vsep (toList ms) ⊕ line')
-      flush messages = do renderIO fd (layout messages)
-                          hFlush fd
-   in withBatchedHandler options flush
+      flush messages = r fd (layout messages) ⪼ hFlush fd
+   in withBatchedHandler bopts flush handler
 
-logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
-               BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α → μ α
-logToHandle bopts lro fh io =
-  let renderEntry     = lroRenderer lroRenderTSSevCSH
-      renderDoc       = vsep ∘ fmap renderEntry ∘ otoList
-      handler stderrH = runLoggingT io (stderrH ∘ renderDoc)
-   in withFDHandler bopts fh (lro ⊣ lroWidth) handler
+----------------------------------------
+
+{-| Options suitable for logging to a file; notably a 1s flush delay and keep
+    messages rather than dropping if the queue fills.
+ -}
+fileBatchingOptions ∷ BatchingOptions
+fileBatchingOptions = BatchingOptions { flushMaxDelay     = 1_000_000
+                                      , blockWhenFull     = True
+                                      , flushMaxQueueSize = 100
+                                      }
 
 {-| Options suitable for logging to a tty; notably a short flush delay (0.1s),
     and drop messages rather than blocking if the queue fills (which should
@@ -219,8 +250,103 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 100_000
                                      , flushMaxQueueSize = 100
                                      }
 
-logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒ LoggingT Log μ α → μ α
-logToStderr = logToHandle ttyBatchingOptions def stderr
+----------------------------------------
+
+logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
+              (Handle → SimpleDocStream ρ → IO()) -- ^ write an SDSρ to Handle
+            → (LogEntry → Doc ρ)                  -- ^ render a LogEntry
+            → BatchingOptions
+            → PageWidth
+            → Handle
+            → LoggingT Log μ α
+            → μ α
+logToHandle renderIO renderEntry bopts width fh io =
+  let renderDoc   = vsep ∘ fmap renderEntry ∘ otoList
+      handler h   = runLoggingT io (h ∘ renderDoc)
+   in withFDHandler renderIO width bopts fh handler
+
+--------------------
+
+logToHandlePlain ∷ (MonadIO μ, MonadMask μ) ⇒
+                   BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α
+                 → μ α
+logToHandlePlain bopts lro = logToHandle RenderText.renderIO (lroRenderer lro)
+                                         bopts (lro ⊣ lroWidth)
+
+--------------------
+
+logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
+                  BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α
+                → μ α
+logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
+                                        (lroRendererAnsi lro) bopts
+                                        (lro ⊣ lroWidth)
+
+----------------------------------------
+
+logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
+            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToFile' ls = let lro = logRenderOpts' ls (AvailablePerLine 80 0.8)
+                 in logToHandlePlain fileBatchingOptions lro
+
+--------------------
+
+logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
+            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToTTY' ls = let lro = logRenderOpts' ls Unbounded
+                in logToHandleAnsi ttyBatchingOptions lro
+
+--------------------
+
+logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
+           BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α → μ α
+logToFD' bopts lro h io = do
+  isatty ← liftIO $ hIsTerminalDevice h
+  if isatty
+  then logToHandleAnsi  bopts lro h io
+  else logToHandlePlain bopts lro h io
+
+--------------------
+
+logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
+          [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+logToFD ls h io = do
+  isatty ← liftIO $ hIsTerminalDevice h
+  if isatty
+  then logToTTY'  ls h io
+  else logToFile' ls h io
+
+----------------------------------------
+
+data CSOpt = NoCallStack | CallStackHead | FullCallStack
+
+logToFile ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
+logToFile NoCallStack   =
+  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ]
+logToFile CallStackHead = 
+  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity
+           , renderLogWithStackHead ]
+logToFile FullCallStack =
+  logToFile' [ renderLogWithCallStack, renderLogWithTimestamp
+           , renderLogWithSeverity ]
+
+--------------------
+
+logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
+logToTTY NoCallStack   =
+  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ]
+logToTTY CallStackHead = 
+  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity
+             , renderLogWithStackHead ]
+logToTTY FullCallStack =
+  logToTTY' [ renderLogWithCallStack, renderLogWithTimestamp
+            , renderLogWithSeverity ]
+
+----------------------------------------
+
+logToStderr cso = logToTTY cso stderr
+
+logToTTYPlain = logToTTY' []
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --
@@ -241,9 +367,9 @@ _log1m ∷ MonadLog Log η ⇒ η ()
 _log1m = logMessage _log1
 
 _log0io ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ ()
-_log0io = do logIO Informational "start"
+_log0io = do logIO Warning "start"
              liftIO $ threadDelay 2_000_000
-             logIO Informational "end"
+             logIO Critical "end"
 
 -- tests -------------------------------
 
@@ -299,6 +425,11 @@ _testr = runTestsReplay tests
      for these. -}
 
 _testm ∷ IO ()
-_testm = logToStderr _log0io
+_testm = do
+  logToStderr NoCallStack _log0io
+  logToTTYPlain           stderr _log0io
+  logToTTY NoCallStack   stderr _log0io
+  logToTTY CallStackHead stderr _log0io
+  logToTTY FullCallStack stderr _log0io
 
 -- that's all, folks! ----------------------------------------------------------

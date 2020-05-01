@@ -9,12 +9,13 @@ where
 -- base --------------------------------
 
 import Data.Bifunctor  ( first )
-import Data.Function   ( ($), id )
+import Data.Function   ( ($), const, id )
 import Data.Functor    ( fmap )
 import Data.Maybe      ( Maybe( Just, Nothing ) )
+import Data.String     ( String )
 import Data.Tuple      ( snd )
-import GHC.Stack       ( CallStack, SrcLoc
-                       , getCallStack, srcLocFile, srcLocStartLine )
+import GHC.Stack       ( CallStack, SrcLoc, fromCallSiteList, getCallStack
+                       , srcLocFile, srcLocStartLine )
 
 -- base-unicode-symbols ----------------
 
@@ -22,7 +23,7 @@ import Data.Function.Unicode  ( (∘) )
 
 -- lens --------------------------------
 
-import Control.Lens  ( Lens', view )
+import Control.Lens  ( Lens', lens, view )
 
 -- more-unicode ------------------------
 
@@ -47,6 +48,9 @@ class HasCallstack α where
 
 instance HasCallstack CallStack where
   callstack = id
+
+instance HasCallstack [(String,SrcLoc)] where
+  callstack = lens fromCallSiteList (const getCallStack)
 
 stackHead ∷ HasCallstack α ⇒ α → Maybe (Text,SrcLoc)
 stackHead = fmap (first pack) ∘ headMay ∘ getCallStack ∘ view callstack

@@ -2,7 +2,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module Log.LogEntry
-  ( LogEntry, doc, logEntry
+  ( LogEntry, doc, logEntry, logEntry'
   , _le0, _le1, _le2, _le3 )
 where
 
@@ -12,7 +12,8 @@ import qualified  GHC.Stack
 
 import Data.Function  ( ($) )
 import Data.Maybe     ( Maybe( Just, Nothing ) )
-import GHC.Stack      ( CallStack, fromCallSiteList )
+import Data.String    ( String )
+import GHC.Stack      ( CallStack, SrcLoc, fromCallSiteList )
 import Text.Show      ( Show( show ) )
 
 -- base-unicode-symbols ----------------
@@ -94,8 +95,11 @@ instance Printable LogEntry where
                                         (stackHeadTxt le)
                                         (renderDoc $ le ⊣ doc)
 
-logEntry ∷ CallStack → Maybe UTCTime → Severity → Doc() → LogEntry
-logEntry = LogEntry
+logEntry ∷ HasCallstack α ⇒ α → Maybe UTCTime → Severity → Doc() → LogEntry
+logEntry cs = LogEntry (cs ⊣ callstack)
+
+logEntry' ∷ [(String,SrcLoc)] → Maybe UTCTime → Severity → Doc() → LogEntry
+logEntry' = logEntry
 
 doc ∷ Lens' LogEntry (Doc ())
 doc = lens _logdoc (\ le txt → le { _logdoc = txt })
