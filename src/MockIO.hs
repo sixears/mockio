@@ -21,13 +21,11 @@ import Data.String          ( String )
 import GHC.Exts             ( fromList )
 import System.Exit          ( ExitCode )
 import System.IO            ( FilePath, IO )
-import Text.Show            ( Show( show ) )
+import Text.Show            ( Show )
 
 -- base-unicode-symbols ----------------
 
-import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
-import Data.Monoid.Unicode    ( (⊕) )
 
 -- dlist -------------------------------
 
@@ -55,7 +53,7 @@ import MonadIO  ( MonadIO, liftIO )
 import Data.MoreUnicode.Bool     ( 𝔹 )
 import Data.MoreUnicode.Lens     ( (⊣) )
 import Data.MoreUnicode.Monad    ( (⪼) )
-import Data.MoreUnicode.Monoid   ( ф, ю )
+import Data.MoreUnicode.Monoid   ( ю )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- mtl ---------------------------------
@@ -71,10 +69,6 @@ import Data.Text.Prettyprint.Doc  ( SimpleDocStream(..)
                                   , annotate, defaultLayoutOptions, hsep
                                   , layoutPretty, line
                                   )
-import Data.Text.Prettyprint.Doc.Render.Util.Panic  ( panicInputNotFullyConsumed
-                                                    , panicUncaughtFail
-                                                    , panicUnpairedPop
-                                                    )
 
 -- streaming ---------------------------
 
@@ -95,9 +89,7 @@ import TastyPlus2  ( withResource2' )
 
 -- text --------------------------------
 
-import qualified  Data.Text       as  T
-
-import Data.Text     ( Text, pack )
+import Data.Text     ( Text )
 import Data.Text.IO  ( readFile )
 
 ------------------------------------------------------------
@@ -165,11 +157,11 @@ mkPIO = Cmd
 --    -) A monad which, when told whether to mock, will (a) act (b) log (c)
 --       return a value
 
-data Mock = DoMock | NoMock
+data DoMock = DoMock | NoMock
   deriving (Eq,Show)
 
--- mkIO' ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
-mkIO' ∷ (MonadIO μ, MonadLog τ μ) ⇒ (Mock → τ) → ω → IO ω → Mock → μ ω
+-- mkIO' ∷ ∀ ω τ μ . (MonadIO μ, MonadLog τ μ) ⇒ (DoMock → τ) → ω → IO ω → DoMock → μ ω
+mkIO' ∷ (MonadIO μ, MonadLog τ μ) ⇒ (DoMock → τ) → ω → IO ω → DoMock → μ ω
 mkIO' log mock_value io mock = do
   logMessage (log mock)
   case mock of
@@ -286,7 +278,7 @@ data LogRenderType = LRO_Plain
 writerMonadTests ∷ TestTree
 writerMonadTests =
   let helloEntry = fromList [ SimpleLogEntry(IORead,"Hello") ]
-      readFn ∷ (MonadIO μ, MonadWriter (DList SimpleLogEntry) μ) ⇒ FilePath → Mock → μ Text
+      readFn ∷ (MonadIO μ, MonadWriter (DList SimpleLogEntry) μ) ⇒ FilePath → DoMock → μ Text
       readFn fn mock = runLoggingT (mkIO' (const helloEntry) "mockety"
                                          (readFile fn) mock) tell
    in testGroup "writerMonad"
@@ -312,7 +304,7 @@ writerMonadTests =
 pureLoggingTests ∷ TestTree
 pureLoggingTests =
   let helloEntry = fromList [ SimpleLogEntry(IORead,"Hello") ]
-      readFn' ∷ (MonadIO μ) ⇒ FilePath → Mock → μ (Text, DList SimpleLogEntry)
+      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, DList SimpleLogEntry)
       readFn' fn mock = runPureLoggingT (mkIO' (const helloEntry) "mockety"
                                         (readFile fn) mock)
    in testGroup "pureLogging"
@@ -377,9 +369,9 @@ logInfo = logMsg Informational
 logMsgTests ∷ TestTree
 logMsgTests =
   let helloEnt = fromList [ WithSeverity Informational $ SimpleLogEntry(IORead,"hello") ]
-      readFn' ∷ (MonadIO μ) ⇒ FilePath → Mock → μ (Text, SimpleLog)
+      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, SimpleLog)
       readFn' fn mock = runPureLoggingT (mkIO' (const $ logInfo IORead "hello")
-                                        "mockety" (readFile fn) mock)
+                                               "mockety" (readFile fn) mock)
    in withResource2' (readFn' "/etc/subgid" NoMock)
                      (readFile "/etc/subgid") $ \ txtlog exptxt →
         testGroup "logMsg"
@@ -390,29 +382,8 @@ logMsgTests =
                                         helloEnt @=? lg
                   ]
 
-data WithAttr β α = WithAttr { attr ∷ β, datum ∷ α }
-  deriving (Eq,Functor,Show)
-
 ю̄ ∷ Monoid α ⇒ [α] → α
 ю̄ = ю
-
-_renderSimplyDecorated ∷ (Monoid α, HasIOClass δ, Show δ) ⇒
-                        (Text → α) → (δ → α) → (δ → α) → SimpleDocStream δ → α
-_renderSimplyDecorated text push pop = go []
-  where
-    go _           SFail               = panicUncaughtFail
-    go []          SEmpty              = ф
-    go (_:_)       SEmpty              = panicInputNotFullyConsumed
-    go []          (SChar c rest)      = text (T.singleton c) ⊕ go []    rest
-    go []          (SText _l t rest)   = text t ⊕ go []    rest
-    go []          (SLine i rest)      = text (T.singleton '\n') ⊕ text (T.replicate i " ") ⊕ go [] rest
-    go stack       (SChar c rest)      = text (T.singleton c) ⊕ go stack rest
-    go stack@(s:_) (SText _l t rest) | s ⊣ ioClass ≡ IORead = go stack rest
-                                     | otherwise            = text (pack $ "]>" ⊕ show stack ⊕ "<[") ⊕ text t ⊕ go stack rest
-    go stack       (SLine i rest)      = text (T.singleton '\n') ⊕ text (T.replicate i " ") ⊕ go stack rest
-    go stack       (SAnnPush ann rest) = push ann ⊕ go (ann : stack) rest
-    go (ann:stack) (SAnnPop rest)      = pop ann ⊕ go stack rest
-    go []          SAnnPop{}           = panicUnpairedPop
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --

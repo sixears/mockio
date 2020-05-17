@@ -35,13 +35,14 @@ import Control.Monad.Log  ( Severity( Critical, Emergency, Informational
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Lens  ( (⊣) )
+import Data.MoreUnicode.Lens     ( (⊣) )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc              ( Doc, (<+>), align, defaultLayoutOptions
-                                              , layoutPretty, pretty, vsep )
-import Data.Text.Prettyprint.Doc.Render.Text  ( renderStrict )
+import Data.Text.Prettyprint.Doc  ( Doc, (<+>), align, defaultLayoutOptions
+                                  , layoutPretty, pretty, vsep )
+import Data.Text.Prettyprint.Doc.Render.Text
+                                  ( renderStrict )
 
 -- text --------------------------------
 
@@ -103,6 +104,8 @@ logEntry' = logEntry
 
 doc ∷ Lens' LogEntry (Doc ())
 doc = lens _logdoc (\ le txt → le { _logdoc = txt })
+
+-- rendering -----------------------------------------------
 
 -- test data -------------------------------------------------------------------
 

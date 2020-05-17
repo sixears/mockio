@@ -24,11 +24,8 @@ where
 import Data.Foldable  ( Foldable( foldr ) )
 import Data.Function  ( ($), flip, id )
 import Data.Functor   ( fmap )
-import Data.Maybe     ( Maybe( Just, Nothing ) )
+import Data.Maybe     ( Maybe( Nothing ) )
 import Data.String    ( String )
-import Data.Tuple     ( snd )
-import GHC.Stack      ( SrcLoc
-                      , getCallStack, prettySrcLoc, srcLocFile,srcLocStartLine )
 import System.Exit    ( ExitCode )
 import System.IO      ( Handle, IO, stdout )
 import Text.Show      ( show )
@@ -64,27 +61,18 @@ import Data.MonoTraversable  ( Element, MonoFoldable( otoList )
 
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣) )
-import Data.MoreUnicode.Monoid   ( ф, ю )
+import Data.MoreUnicode.Monoid   ( ф )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
                                   , PageWidth( Unbounded )
-                                  , (<+>)
-                                  , align, annotate, brackets
-                                  , defaultLayoutOptions, emptyDoc, indent
-                                  , layoutPageWidth, layoutPretty, line, pretty
-                                  , reAnnotate, vsep
+                                  , defaultLayoutOptions, layoutPageWidth
+                                  , layoutPretty, line, pretty, reAnnotate, vsep
                                   )
-import Data.Text.Prettyprint.Doc.Render.Terminal
-                                  ( AnsiStyle, Color( Black, Green, Red, White
-                                                    , Yellow )
-                                  , bgColor, bgColorDull, bold, color
-                                  , renderIO, underlined
-                                  )
-import Data.Text.Prettyprint.Doc.Render.Text
-                                  ( renderStrict )
+import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle, renderIO )
+import Data.Text.Prettyprint.Doc.Render.Text      ( renderStrict )
 
 -- tasty -------------------------------
 
@@ -101,14 +89,9 @@ import TastyPlus2  ( assertListEq )
 
 -- text --------------------------------
 
-import qualified  Data.Text       as  T
-import qualified  Data.Text.Lazy  as  LT
+import qualified  Data.Text  as  T
 
 import Data.Text  ( Text )
-
--- tfmt --------------------------------
-
-import Text.Fmt2  ( formatUTCYDoW, fmt )
 
 ------------------------------------------------------------
 --                     Local Imports                      --
@@ -116,10 +99,12 @@ import Text.Fmt2  ( formatUTCYDoW, fmt )
 
 import qualified  Log.LogEntry  as  LogEntry
 
-import Log.HasCallstack  ( HasCallstack( callstack ), stackHead )
-import Log.HasSeverity   ( HasSeverity( severity ) )
-import Log.HasUTCTime    ( HasUTCTimeY( utcTimeY ), )
 import Log.LogEntry      ( LogEntry, logEntry', _le0 )
+import Log.Render        ( renderWithCallStack, renderWithSeverity
+                         , renderWithSeverityAndTimestamp
+                         , renderWithSeverityAnsi, renderWithStackHead
+                         , renderWithTimestamp
+                         )
 
 --------------------------------------------------------------------------------
 
@@ -294,106 +279,33 @@ lroOpts ∷ Lens' LogRenderOpts LayoutOptions
 lroOpts = lens (LayoutOptions ∘ _lroWidth)
                (\ opts lo → opts { _lroWidth = layoutPageWidth lo })
 
-infixr 5 ⊞
--- hsep
-(⊞) ∷ Doc α → Doc α → Doc α
-(⊞) = (<+>)
-
-locToText ∷ SrcLoc → Text
-locToText loc = [fmt|«%s#%w»|] (srcLocFile loc) (srcLocStartLine loc)
-                   
-renderLocation ∷ Maybe SrcLoc → Doc α
-renderLocation (Just loc) = pretty $ locToText loc
-renderLocation Nothing    = emptyDoc
-
-renderWithSeverity_ ∷ HasSeverity τ ⇒ τ → Doc ρ
-renderWithSeverity_ m =
-  let pp ∷ HasSeverity α ⇒ α → Doc ann
-      pp sv = pretty $ case sv ⊣ severity of
-                         Emergency     → ("EMRG" ∷ Text)
-                         Alert         → "ALRT"
-                         Critical      → "CRIT"
-                         Error         → "Erro"
-                         Warning       → "Warn"
-                         Notice        → "Note"
-                         Informational → "Info"
-                         Debug         → "Debg"
-   in pp m
-
-renderWithSeverityAnsi_ ∷ HasSeverity τ ⇒ τ → Doc AnsiStyle
-renderWithSeverityAnsi_ m =
-  let red = color Red
-      yellow = color Yellow
-      green  = color Green
-      white  = color White
-      black  = color Black
-      b = bold
-      u = underlined
-      bgBlack = bgColorDull Black
-      bgRed   = bgColor     Red
-      anno ls = annotate (ю (bgBlack : ls))
-      annoR ls = annotate (ю (bgRed : ls))
-      pp ∷ HasSeverity α ⇒ α → Doc AnsiStyle
-      pp sv = case sv ⊣ severity of
-                         Emergency     → annoR [b,u,black] "EMRG"
-                         Alert         → anno  [b,u,red] "ALRT"
-                         Critical      → anno  [red] "CRIT"
-                         Error         → anno  [red] "Erro"
-                         Warning       → anno  [yellow] "Warn"
-                         Notice        → anno  [u,green] "Note"
-                         Informational → anno  [green] "Info"
-                         Debug         → anno  [white] "Debg"
-   in pp m
-
-renderWithSeverityAnsi ∷ HasSeverity τ ⇒ (τ → Doc AnsiStyle) → τ → Doc AnsiStyle
-renderWithSeverityAnsi f m = brackets (renderWithSeverityAnsi_ m) ⊞ align (f m)
-
-renderWithSeverity ∷ HasSeverity τ ⇒ (τ → Doc ρ) → τ → Doc ρ
-renderWithSeverity f m = brackets (renderWithSeverity_ m) ⊞ align (f m)
+----------
 
 renderLogWithSeverity ∷ LogAnnotator
 renderLogWithSeverity = LogAnnotator renderWithSeverityAnsi renderWithSeverity
 
-renderWithSeverityAndTimestamp ∷ (HasSeverity τ, HasUTCTimeY τ) ⇒
-                                 (τ → Doc ρ) → τ → Doc ρ
-renderWithSeverityAndTimestamp f m =
-  brackets (renderWithTimestamp_ m ⊕ "|" ⊕ renderWithSeverity_ m) ⊞ align (f m)
+----------
+
+renderLogWithTimestamp ∷ LogAnnotator
+renderLogWithTimestamp = LogAnnotator renderWithTimestamp renderWithTimestamp
+
+----------
+
+renderLogWithStackHead ∷ LogAnnotator
+renderLogWithStackHead = LogAnnotator renderWithStackHead renderWithStackHead
+
+----------
+
+renderLogWithCallStack ∷ LogAnnotator
+renderLogWithCallStack = LogAnnotator renderWithCallStack renderWithCallStack
+
+----------
 
 renderLogWithSeverityAndTimestamp ∷ LogAnnotator
 renderLogWithSeverityAndTimestamp =
   LogAnnotator renderWithSeverityAndTimestamp renderWithSeverityAndTimestamp
 
-prettyCallStack ∷ [(String,SrcLoc)] → Doc ann
-prettyCallStack [] = "empty callstack"
-prettyCallStack (root:rest) =
-  prettyCallSite root ⊕ line ⊕ indent 2 (vsep (prettyCallSite ⊳ rest))
-  where prettyCallSite (f,loc) =
-          pretty (LT.pack f) ⊕ ", called at " ⊕
-          pretty (LT.pack (GHC.Stack.prettySrcLoc loc))
-
-renderWithCallStack ∷ HasCallstack δ ⇒ (δ -> Doc ρ) -> δ -> Doc ρ
-renderWithCallStack f m =
-  f m ⊕ line ⊕ indent 2 (prettyCallStack (getCallStack $ m ⊣ callstack))
-
-renderLogWithCallStack ∷ LogAnnotator
-renderLogWithCallStack = LogAnnotator renderWithCallStack renderWithCallStack
-
-renderWithStackHead ∷ HasCallstack δ ⇒ (δ -> Doc ρ) -> δ -> Doc ρ
-renderWithStackHead f m =
-  let renderStackHead = renderLocation ∘ fmap snd
-   in renderStackHead (stackHead m) ⊞ align (f m)
-
-renderLogWithStackHead ∷ LogAnnotator
-renderLogWithStackHead = LogAnnotator renderWithStackHead renderWithStackHead
-
-renderWithTimestamp_  ∷ HasUTCTimeY τ ⇒ τ → Doc ρ
-renderWithTimestamp_ m = pretty (formatUTCYDoW $ m ⊣ utcTimeY)
-
-renderWithTimestamp ∷ HasUTCTimeY τ ⇒ (τ → Doc ρ) → τ → Doc ρ
-renderWithTimestamp f m = brackets (renderWithTimestamp_ m) ⊞ align (f m)
-
-renderLogWithTimestamp ∷ LogAnnotator
-renderLogWithTimestamp = LogAnnotator renderWithTimestamp renderWithTimestamp
+--------------------
 
 renderLogEntriesAnsi ∷ (MonoFoldable χ, Element χ ~ LogEntry) ⇒
                        LogRenderOpts → χ → Doc AnsiStyle

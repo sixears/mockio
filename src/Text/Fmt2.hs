@@ -1,17 +1,11 @@
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TemplateHaskell      #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UnicodeSyntax        #-}
 {-# LANGUAGE ViewPatterns         #-}
 
 {- | Format Text or Strings, in a type-safe way, using Quasi Quotations.
 
-    @    
+    @
     import Text.Fmt   ( fmt )
     import Data.Text  ( pack )
 
@@ -36,7 +30,8 @@ module Text.Fmt2
 
     -- $formatting
 
-    ByteFmtBase(..), FormatTarget(..)
+    ByteFmtBase(..), FormatTarget(..), ToCallStack( toCallStack )
+  , ToUTCTimeY( toUTCTimeY )
   , fmt, fmtS, fmtL, fmtT, formatBytes, formatUTCY, formatUTCYDoW
   -- for testing only
   , Token(..), conversion, fill, sprintf, tokens )
@@ -49,23 +44,35 @@ import Prelude ( Double, Int, Integer, Integral, Real, RealFloat
 
 -- base --------------------------------
 
-import Control.Applicative    ( (<*), (<*>), (*>), (<|>), many )
-import Data.Char              ( Char, toUpper )
-import Data.Either            ( Either( Left, Right ) )
-import Data.Eq                ( Eq, (==) )
-import Data.Foldable          ( Foldable, foldr, toList )
-import Data.Function          ( (.), ($), const, id )
-import Data.Functor           ( (<$>), fmap )
-import Data.List              ( concat, elem )
-import Data.Maybe             ( Maybe( Just, Nothing ) )
-import Data.Monoid            ( (<>) )
-import Data.Ord               ( (<), (>) )
-import Data.String            ( String )
-import Data.Word              ( Word8 )
-import Numeric                ( logBase )
-import Numeric.Natural        ( Natural )
-import Text.Read              ( read )
-import Text.Show              ( Show( show ) )
+import Control.Applicative  ( many )
+import Data.Bool            ( otherwise )
+import Data.Char            ( Char, toUpper )
+import Data.Either          ( Either( Left, Right ) )
+import Data.Eq              ( Eq )
+import Data.Foldable        ( Foldable, foldr, toList )
+import Data.Function        ( ($), const, id )
+import Data.Functor         ( fmap )
+import Data.List            ( concat, elem, intercalate )
+import Data.Maybe           ( Maybe( Just, Nothing ) )
+import Data.Monoid          ( mconcat )
+import Data.Ord             ( (<), (>) )
+import Data.String          ( String )
+import Data.Word            ( Word8 )
+import GHC.Stack            ( CallStack, SrcLoc
+                            , getCallStack, srcLocFile, srcLocModule
+                            , srcLocPackage, srcLocEndCol, srcLocEndLine
+                            , srcLocStartCol, srcLocStartLine
+                            )
+import Numeric              ( logBase )
+import Numeric.Natural      ( Natural )
+import Text.Read            ( read )
+import Text.Show            ( Show( show ) )
+
+-- base-unicode-symbols ----------------
+
+import Data.Eq.Unicode        ( (≡) )
+import Data.Function.Unicode  ( (∘) )
+import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
 
@@ -77,8 +84,14 @@ import qualified  Formatting.Formatters  as  Formatters
 
 import Formatting             ( Format, (%), (%.)
                               , format, formatToString, later, mapf, sformat )
-import Formatting.Formatters  ( Buildable, bin, fixed, hex, int, left
-                              , oct, right, shortest, shown, stext, text )
+import Formatting.Formatters  ( bin, fixed, hex, int, oct, shortest, shown
+                              , stext, text )
+
+-- more-unicode ------------------------
+
+import Data.MoreUnicode.Applicative  ( (∤), (⋪), (⋫), (⊵) )
+import Data.MoreUnicode.Functor      ( (⊳) )
+import Data.MoreUnicode.Monoid       ( ю )
 
 -- number ------------------------------
 
@@ -89,7 +102,11 @@ import Number  ( ToNum( toNumI ) )
 import Text.Parsec.Char        ( char, digit, noneOf, oneOf, string )
 import Text.Parsec.Combinator  ( eof, many1, option, optionMaybe )
 import Text.Parsec.Error       ( ParseError )
-import Text.Parsec.Prim        ( ParsecT, Stream, (<?>), parse, try )
+import Text.Parsec.Prim        ( (<?>), parse, try )
+
+-- parsec-plus -------------------------
+
+import ParsecPlusBase2  ( Parser, boundedDoubledChars )
 
 -- template-haskell --------------------
 
@@ -107,6 +124,10 @@ import qualified  Data.Text.Lazy.Builder  as  LazyBuilder
 
 import Data.Text  ( Text, dropWhileEnd, pack, unpack )
 
+-- text-format -------------------------
+
+import Data.Text.Buildable  as  Buildable
+
 -- time --------------------------------
 
 import Data.Time.Clock   ( UTCTime )
@@ -122,71 +143,71 @@ import Text.Fmt2.Token  ( Token( Conversion, Str ) )
 
 -- | tokenize a string into strings & conversions
 tokens ∷ Text → Either ParseError [Token]
-tokens s = concatTokens <$> parse (tokenP <* eof) (unpack s) s
+tokens s = concatTokens ⊳ parse (tokenP ⋪ eof) (unpack s) s
 
 ----------------------------------------
 
 -- | squish consecutive Str together
 
 concatTokens ∷ [Token] → [Token]
-concatTokens (Str s : Str s' : ts) = concatTokens (Str (s <> s') : ts)
+concatTokens (Str s : Str s' : ts) = concatTokens (Str (s ⊕ s') : ts)
 concatTokens (t : t' : ts)         = t : t' : ts
 concatTokens ts                    = ts
 
 ----------------------------------------
 
 -- | parse a string into tokens
-tokenP ∷ Stream s m Char ⇒ ParsecT s u m [Token]
-tokenP = many (simpleStr <|> try escapePC <|> try escapeSlash <|> conversion)
+tokenP ∷ Parser [Token]
+tokenP = many (simpleStr ∤ try escapePC ∤ try escapeSlash ∤ conversion)
 
 ----------------------------------------
 
--- | parse a string intoa conversion specifier
-
-conversion ∷ Stream s m Char ⇒ ParsecT s u m Token
+{- | Parse a string into a conversion specifier. -}
+conversion ∷ Parser Token
 conversion =
-  Conversion <$> (string "%" *> optionMaybe fill)
-             <*> optionMaybe precision
-             <*> (oneOf "bdefIlLnostTwxyYzZ" <?> "valid conversion char")
+  Conversion ⊳ (string "%" ⋫ optionMaybe fill)
+             ⊵ optionMaybe precision
+             ⊵ optionMaybe (pack ⊳ boundedDoubledChars '{' '}')
+             ⊵ (oneOf "bdefIkKlLnostTwxyYzZ" <?> "valid conversion char")
 
 ----------------------------------------
 
--- | parser for the fill spec of a conversion (the -07 of "%-07s", for example)
-fill ∷ Stream s m Char ⇒ ParsecT s u m (Integer, Char)
-fill =
-  (\ a b c d → (read (concat [a,[c],d]), b)) <$> option "" (string "-")
-                                              <*> option ' ' (char '0')
-                                              <*> oneOf "123456789"
-                                              <*> many digit
+{- | Parser for the fill spec of a conversion (the -07 of "%-07.4s", for
+     example). -}
+fill ∷ Parser (Integer, Char)
+fill = (\ a b c d → (read (concat [a,[c],d]), b)) ⊳ option "" (string "-")
+                                                  ⊵ option ' ' (char '0')
+                                                  ⊵ oneOf "123456789"
+                                                  ⊵ many digit
 
 ----------------------------------------
 
 -- | parse for the precision part of a conversion (.2 of "%3.2f", for example)
 
-precision ∷ Stream s m Char ⇒ ParsecT s u m Natural
-precision = read <$> (char '.' *> many digit)
+precision ∷ Parser Natural
+precision = read ⊳ (char '.' ⋫ many digit)
 
 ----------------------------------------
 
 -- | parser for an unadorned string (without any % chars)
-simpleStr ∷ Stream s m Char ⇒ ParsecT s u m Token
-simpleStr = Str <$> many1 (noneOf "%\\")
+simpleStr ∷ Parser Token
+simpleStr = Str ⊳ many1 (noneOf "%\\")
 
 ----------------------------------------
 
 -- | parser for an escaped '%' (represented in the incoming string as "%%")
-escapePC ∷ Stream s m Char ⇒ ParsecT s u m Token
-escapePC = Str <$> const "%" <$> string "%%"
+escapePC ∷ Parser Token
+escapePC = Str ⊳ const "%" ⊳ string "%%"
 
 ----------------------------------------
 
 -- | parser for slash escapes, e.g., \\, \n, \t
-escapeSlash ∷ Stream s m Char ⇒ ParsecT s u m Token
-escapeSlash = Str . decode <$> (char '\\' *> oneOf "nt\\")
+escapeSlash ∷ Parser Token
+escapeSlash = Str ∘ decode ⊳ (char '\\' ⋫ oneOf "nt\\")
               where decode 'n'  = "\n"
                     decode 't'  = "\t"
                     decode '\\' = "\\"
-                    decode c    = error $ "bad decode char: '" <> [c] <> "'"
+                    decode c    = error $ ю [ "bad decode char: '", [c], "'" ]
 
 ----------------------------------------
 
@@ -195,13 +216,13 @@ data ByteFmtBase = B_1000 | B_1024
   deriving Eq
 
 -- | try really hard to fit within 7 chars
-formatBytes ∷ (Buildable a, Integral a) ⇒ ByteFmtBase → a → Text
+formatBytes ∷ (Formatters.Buildable a, Integral a) ⇒ ByteFmtBase → a → Text
 formatBytes _ (toInteger → 0) = "0"
 formatBytes b bs =
     case b of
       B_1000 → go 1000 bs -- (byteSize bs)
       B_1024 → go 1024 bs -- (fromIntegral $ byteSize bs)
-    where go ∷ (Buildable b, Integral b) ⇒ Double → b → Text
+    where go ∷ (Formatters.Buildable b, Integral b) ⇒ Double → b → Text
           go x bytes =
             let ex ∷ Word8 = floor (logBase x $ fromIntegral bytes)
                 (pfx,exp) ∷ (Maybe Char, Word8)= case ex of
@@ -215,11 +236,11 @@ formatBytes b bs =
                               7 → (Just 'Z', 7)
                               _ → (Just 'Y', 8)
                 formatB n = fixed n % Formatters.char % Formatters.string % "B"
-                i = if b == B_1024 then "i" else ""
+                i = if b ≡ B_1024 then "i" else ""
              in case pfx of
                  Nothing → sformat (int % "B") bytes
                  Just c  → let mant = fromIntegral bytes / (x^exp)
-                               c_   = if b == B_1024 then toUpper c else c
+                               c_   = if b ≡ B_1024 then toUpper c else c
                              in if mant < 10
                                 then -- [fmt|%3.2f%T%sB|]
                                      sformat (formatB 2) mant c_ i
@@ -231,34 +252,77 @@ formatBytes b bs =
 
 ----------------------------------------
 
-class UTCTimeY α where
+class ToUTCTimeY α where
   toUTCTimeY ∷ α → Maybe UTCTime
 
-instance UTCTimeY UTCTime where
+instance ToUTCTimeY UTCTime where
   toUTCTimeY = Just
 
-instance UTCTimeY (Maybe UTCTime) where
+instance ToUTCTimeY (Maybe UTCTime) where
   toUTCTimeY = id
 
 {- | Format a (Maybe UTCTime), in almost-ISO8601-without-fractional-seconds
      (always in Zulu). -}
-formatUTCY ∷ UTCTimeY α ⇒ α → Text
+formatUTCY ∷ ToUTCTimeY α ⇒ α → Text
 formatUTCY mt = case toUTCTimeY mt of
                   Just t  → pack $ formatTime defaultTimeLocale "%FZ%T" t
                   Nothing → "-------------------"
 
 {- | Format a (Maybe UTCTime), in ISO8601-without-fractional-seconds (always in
      Zulu), with a leading 3-letter day-of-week. -}
-formatUTCYDoW ∷ UTCTimeY α ⇒ α → Text
+formatUTCYDoW ∷ ToUTCTimeY α ⇒ α → Text
 formatUTCYDoW mt = case toUTCTimeY mt of
                      Just t  → pack $ formatTime defaultTimeLocale "%FZ%T %a" t
                      Nothing → "-----------------------"
 
-toFormatUTC ∷ UTCTimeY α ⇒ Format ρ (α → ρ)
-toFormatUTC = later $ LazyBuilder.fromText . formatUTCY
+toFormatUTC ∷ ToUTCTimeY α ⇒ Format ρ (α → ρ)
+toFormatUTC = later $ LazyBuilder.fromText ∘ formatUTCY
 
-toFormatUTCDoW ∷ UTCTimeY α ⇒ Format ρ (α → ρ)
-toFormatUTCDoW = later $ LazyBuilder.fromText . formatUTCYDoW
+toFormatUTCDoW ∷ ToUTCTimeY α ⇒ Format ρ (α → ρ)
+toFormatUTCDoW = later $ LazyBuilder.fromText ∘ formatUTCYDoW
+
+----------------------------------------
+
+class ToCallStack α where
+  toCallStack ∷ α → CallStack
+
+instance ToCallStack CallStack where
+  toCallStack = id
+
+formatStackHead ∷ ToCallStack α ⇒ α → String
+formatStackHead a = case getCallStack (toCallStack a) of
+                      []          → "«NO STACK»"
+                      ((_,loc):_) → mconcat [ "«"
+                                            , srcLocFile loc
+                                            , "#"
+                                            , show $ srcLocStartLine loc
+                                            , "»"
+                                            ]
+
+toFormatStackHead ∷ ToCallStack α ⇒ Format ρ (α → ρ)
+toFormatStackHead = later $ LazyBuilder.fromString ∘ formatStackHead
+
+----------------------------------------
+
+formatCallStack ∷ ToCallStack α ⇒ α → String
+formatCallStack (getCallStack ∘ toCallStack → ss) =
+  let renderStackLine ∷ (String,SrcLoc) → String
+      renderStackLine (fname,loc) = let pkg = srcLocPackage   loc
+                                        mod = srcLocModule    loc
+                                        fn  = srcLocFile      loc
+                                        sc  = srcLocStartCol  loc
+                                        sl  = srcLocStartLine loc
+                                        ec  = srcLocEndCol    loc
+                                        el  = srcLocEndLine   loc
+                                        st  = show sl ⊕ ":" ⊕ show sc
+                                        ed  = show el ⊕ ":" ⊕ show ec
+                                        src = ю [ pkg, ":", mod, ":" ⊕ fn ]
+                                        lc = st ⊕ "-" ⊕ ed
+                                     in ю [ fname, " (", src, " ", lc, ")" ]
+   in intercalate "\n" $ renderStackLine ⊳ ss
+
+toFormatCallStack ∷ ToCallStack α ⇒ Format ρ (α → ρ)
+toFormatCallStack = later $ LazyBuilder.fromString ∘ formatCallStack
 
 ----------------------------------------
 
@@ -286,14 +350,18 @@ sprintf_ fnam t =
                       foldr conjoin (litE $ stringL "") (fmap tokOp toks)
                   where conjoin = infixOp '(%)
 
--- | conversion token as formatter; e.g., %-3t ⇒ (left 3 ' ') %. stext
+{- | Implement a token.  Regular strings pass through; conversions ("%…") are
+     implemented, and padded as necessary.
+     Conversion token as formatter; e.g., %-3t ⇒ (left 3 ' ') %. stext
+ -}
 tokOp ∷ Token → ExpQ
-tokOp (Str s)                       = litE $ stringL s
-tokOp (Conversion Nothing p c)      = charOp c Nothing p
-tokOp (Conversion (Just (i,c)) p o) =
-  infixOp '(%.) (fillOp (i,c)) (charOp o (Just i) p)
--- tokOp (Conversion x y)         =
---   error $ "failed conversion: " <> show x <> ", " <> show y
+-- literal string
+tokOp (Str s)                         = litE $ stringL s
+-- conversion, no padding
+tokOp (Conversion Nothing p t c)      = charOp c Nothing p t
+-- conversion, with padding
+tokOp (Conversion (Just (width,fll)) prec txt convchar) =
+  infixOp '(%.) (fillOp (width,fll)) (charOp convchar (Just width) prec txt)
 
 ----------------------------------------
 
@@ -302,27 +370,52 @@ fillIt ∷ Name → Integer → Char → ExpQ
 fillIt direction width chr =
   appE (appE (varE direction) (litE (integerL width))) (litE $ charL chr)
 
+{- | Transform a `LazyText` transformer to a `Builder`. -}
+buildLTTrans ∷ Buildable ρ ⇒
+               (LazyText.Text → LazyText.Text) → ρ → LazyBuilder.Builder
+buildLTTrans f =
+  LazyBuilder.fromLazyText ∘ f ∘ LazyBuilder.toLazyText ∘ Buildable.build
+
+buildLTFormatter ∷ Buildable ρ ⇒
+                   (LazyText.Text → LazyText.Text) → Format α (ρ → α)
+buildLTFormatter = later ∘ buildLTTrans
+
+{- | Apply a text transformation to each line of a piece of text. -}
+eachLine ∷ Buildable ρ ⇒ (LazyText.Text → LazyText.Text) → Format α (ρ → α)
+eachLine f =
+  -- we split & intercalate rather than lines/unlines, because the latter is
+  -- lossy where the last "line" does or does not end in a newline
+  buildLTFormatter $ LazyText.intercalate "\n" ∘ fmap f ∘ LazyText.split (≡'\n')
+
+{- | Pad out each line to (to the left) a given width with a given character. -}
+lefts ∷ Buildable ρ ⇒ Integer → Char → Format α (ρ → α)
+lefts k c = eachLine (LazyText.justifyRight (fromIntegral k) c)
+
+{- | Pad out each line to (to the right) a given width with a given character.-}
+rights ∷ Buildable ρ ⇒ Integer → Char → Format α (ρ → α)
+rights k c = eachLine (LazyText.justifyLeft (fromIntegral k) c)
+
 -- | conversion fill; -x → left, (+)x → right
 
 fillOp ∷ (Integer,Char) → ExpQ
-fillOp (i,c) | i < 0 = fillIt 'right (abs i) c
-fillOp (i,c) | i > 0 = fillIt 'left       i  c
-fillOp (_,_) = -- i == 0 : something's gone wrong!
-               error "cannot fill with size 0"
-
+fillOp (i,c) | i < 0     = fillIt 'rights (abs i) c
+             | i > 0     = fillIt 'lefts       i  c
+             | otherwise = -- i ≡ 0 : something's gone wrong!
+                           error "cannot fill with size 0"
 ----------------------------------------
 
 toTextF ∷ Printable t ⇒ Format r (t → r)
-toTextF = later $ LazyBuilder.fromText . toText
+toTextF = later $ LazyBuilder.fromText ∘ toText
 
 toTextListF ∷ (Foldable f, Printable t) ⇒ Format r (f t → r)
 toTextListF =
-  later $ LazyBuilder.fromText . Text.intercalate "," . fmap toText . toList
+  later $ LazyBuilder.fromText ∘ Text.intercalate "," ∘ fmap toText ∘ toList
 
 ----------------------------------------
 
-toFormatBytes ∷ (Buildable a, Integral a) ⇒ ByteFmtBase → Format r (a → r)
-toFormatBytes b = later $ LazyBuilder.fromText . formatBytes b
+toFormatBytes ∷ (Formatters.Buildable a, Integral a) ⇒
+                ByteFmtBase → Format r (a → r)
+toFormatBytes b = later $ LazyBuilder.fromText ∘ formatBytes b
 
 ----------------------------------------
 
@@ -428,49 +521,75 @@ toFormatBytes b = later $ LazyBuilder.fromText . formatBytes b
                                               www is three-letter day-of-week.
                            >>> getCurrentTime >>= return . [fmtT|%Z|]
                            "2020-04-20Z05:58:47 Mon"
+
+   [@K@] - `ToCallStack` α ⇒ Render a callstack *as multiple lines*.  Note
+                             that the behaviour of basic numeric fills with
+                             multiple lines is undefined; you might want to use
+                             a `{…}` clause here to provide indenting.
+                             
 -}
 
-charOpNoPrecision ∷ ExpQ → Char → Maybe Natural → ExpQ
-charOpNoPrecision f _ Nothing  = f
-charOpNoPrecision _ c (Just p) = error $ "conversion char '" <> [c]
-                                      <> "' does not admit precision ("
-                                      <> show p <> ")"
+{- | Character op: non-Nothing precision causes error. -}
+charOpNoPrecision ∷ ExpQ → Char → Maybe Natural → Maybe Text → ExpQ
+charOpNoPrecision f _ Nothing Nothing = f
+charOpNoPrecision _ chr (Just prec) Nothing =
+  error $ ю [ "conversion char '", [chr], "' does not admit precision ("
+            , show prec, ")" ]
+charOpNoPrecision _ chr Nothing (Just t) =
+  error $ ю [ "conversion char '", [chr], "' admits no text ({", unpack t,"})" ]
+charOpNoPrecision _ chr (Just prec) (Just t) =
+  error $ ю [ "conversion char '", [chr], "' admits neither precision ("
+            , show prec, ")", " nor text ({", unpack t
+            , "})" ]
 
--- | conversion character as formatter; e.g., 't' → stext; takes precision
---   too, lest that affect the conversion
-charOp ∷ Char → Maybe Integer → Maybe Natural → ExpQ
+{- | Conversion character as formatter; e.g., 't' → stext; takes fill width &
+     precision too, lest that affect the conversion. -}
+charOp ∷ Char          -- ^ conversion character (typically for errmsgs)
+       → Maybe Integer -- ^ fill width
+       → Maybe Natural -- ^ precision
+       → Maybe Text    -- ^ optional text (between {}) (unused in charOp)
+       → ExpQ
 
-charOp c@'L' _ p = charOpNoPrecision (varE 'toTextListF) c p
-charOp c@'l' _ p = charOpNoPrecision (varE 'text) c p
-charOp c@'s' _ p = charOpNoPrecision (varE 'Formatters.string) c p
-charOp c@'t' _ p = charOpNoPrecision (varE 'stext) c p
-charOp c@'T' _ p = charOpNoPrecision (varE 'toTextF) c p
-charOp c@'w' _ p = charOpNoPrecision (varE 'shown) c p
+-- list (foldable), joined with ','
+charOp c@'L' _ p t = charOpNoPrecision (varE 'toTextListF) c p t
+-- lazy text
+charOp c@'l' _ p t = charOpNoPrecision (varE 'text) c p t
+charOp c@'s' _ p t = charOpNoPrecision (varE 'Formatters.string) c p t
+charOp c@'t' _ p t = charOpNoPrecision (varE 'stext) c p t
+charOp c@'T' _ p t = charOpNoPrecision (varE 'toTextF) c p t
+charOp c@'w' _ p t = charOpNoPrecision (varE 'shown) c p t
 
-charOp c@'d' _ p = charOpNoPrecision (varE 'int) c p
-charOp c@'x' _ p = charOpNoPrecision (varE 'hex) c p
-charOp c@'b' _ p = charOpNoPrecision (varE 'bin) c p
-charOp c@'o' _ p = charOpNoPrecision (varE 'oct) c p
-charOp c@'n' _ p = charOpNoPrecision (varE 'tonum) c p
+charOp c@'d' _ p t = charOpNoPrecision (varE 'int) c p t
+charOp c@'x' _ p t = charOpNoPrecision (varE 'hex) c p t
+charOp c@'b' _ p t = charOpNoPrecision (varE 'bin) c p t
+charOp c@'o' _ p t = charOpNoPrecision (varE 'oct) c p t
+charOp c@'n' _ p t = charOpNoPrecision (varE 'tonum) c p t
 
-charOp 'f' _ Nothing  = varE 'floatmin
-charOp 'f' _ (Just i) = appE (varE 'fixed) (litE (integerL $ fromIntegral i))
-charOp 'e' _ Nothing  = appE (varE 'expt) (litE (integerL 0))
-charOp 'e' _ (Just i) = appE (varE 'expt) (litE (integerL $ fromIntegral i))
+charOp 'f' _ _ (Just t) =
+  error $ "conversion char 'f' admits no text ({" ⊕ unpack t ⊕ "})"
+charOp 'f' _ Nothing  Nothing = varE 'floatmin
+charOp 'f' _ (Just i) Nothing =
+  appE (varE 'fixed) (litE (integerL $ fromIntegral i))
+charOp 'e' _ Nothing  Nothing = appE (varE 'expt) (litE (integerL 0))
+charOp 'e' _ (Just i) Nothing = appE
+  (varE 'expt) (litE (integerL $ fromIntegral i))
 
-charOp 'y' _ Nothing = appE (varE 'toFormatBytes) (conE 'B_1000)
-charOp 'y' _ (Just _) = error "y format does not handle precision"
-charOp 'Y' _ Nothing = appE (varE 'toFormatBytes) (conE 'B_1024)
-charOp 'Y' _ (Just _) = error "Y format does not handle precision"
+charOp c@'y' _ p t =
+  charOpNoPrecision (appE (varE 'toFormatBytes) (conE 'B_1000)) c p t
+charOp c@'Y' _ p t =
+  charOpNoPrecision (appE (varE 'toFormatBytes) (conE 'B_1024)) c p t
 
-charOp 'z' _ Nothing = varE 'toFormatUTC
-charOp 'Z' _ Nothing = varE 'toFormatUTCDoW
+charOp c@'z' _ p t = charOpNoPrecision (varE 'toFormatUTC) c p t
+charOp c@'Z' _ p t = charOpNoPrecision (varE 'toFormatUTCDoW) c p t
 
-charOp x _ _ = error $ "bad conversion char'" <> [x] <> "'"
+charOp c@'k' _ p t = charOpNoPrecision (varE 'toFormatStackHead) c p t
+charOp c@'K' _ p t = charOpNoPrecision (varE 'toFormatCallStack) c p t
+
+charOp x _ _ _ = error $ "bad conversion char'" ⊕ [x] ⊕ "'"
 
 floatmin ∷ Real α ⇒ Format r (α → r)
 floatmin = let dropper = dropWhileEnd (`elem` (".0" ∷ String))
-            in later $ LazyBuilder.fromText . dropper . sformat shortest
+            in later $ LazyBuilder.fromText ∘ dropper ∘ sformat shortest
 
 tonum ∷ ToNum α ⇒ Format r (α → r)
 tonum = mapf toNumI int
@@ -493,7 +612,7 @@ decompose val = let (mant2,ex2) = decodeFloat val
                     mant10 ∷ Double = 10**(res - (fromIntegral ex10∷Double))
                  in if mant2 > 0
                     then (mant10,ex10)
-                    else (-mant10,ex10) 
+                    else (-mant10,ex10)
 
 ----------------------------------------
 
@@ -519,7 +638,7 @@ fmt ∷ QuasiQuoter
 fmt =  QuasiQuoter { quoteDec  = error "not implemented"
                    , quoteType = error "not implemented"
                    , quotePat  = error "not implemented"
-                   , quoteExp  = sprintf . pack
+                   , quoteExp  = sprintf ∘ pack
                    }
 
 --------------------
@@ -529,7 +648,7 @@ fmtS ∷ QuasiQuoter
 fmtS =  QuasiQuoter { quoteDec  = error "not implemented"
                     , quoteType = error "not implemented"
                     , quotePat  = error "not implemented"
-                    , quoteExp  = sprintfS . pack
+                    , quoteExp  = sprintfS ∘ pack
                     }
 
 --------------------
@@ -539,7 +658,7 @@ fmtL ∷ QuasiQuoter
 fmtL =  QuasiQuoter { quoteDec  = error "not implemented"
                     , quoteType = error "not implemented"
                     , quotePat  = error "not implemented"
-                    , quoteExp  = sprintfL . pack
+                    , quoteExp  = sprintfL ∘ pack
                     }
 
 --------------------
@@ -549,7 +668,7 @@ fmtT ∷ QuasiQuoter
 fmtT =  QuasiQuoter { quoteDec  = error "not implemented"
                     , quoteType = error "not implemented"
                     , quotePat  = error "not implemented"
-                    , quoteExp  = sprintfT . pack
+                    , quoteExp  = sprintfT ∘ pack
                     }
 
 ------------------------------------------------------------

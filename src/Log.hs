@@ -8,6 +8,10 @@
 
 module Log
   ( Log, WithLog, WithLogIO
+
+  , emergency, alert, critical, err, warn, notice, info, debug
+  , emergency', alert', critical', err', warn', notice', info', debug'
+
   , log, log', logIO, logIO', logRender, logRender'
   , logToFD', logToFD, logToFile
   -- test data
@@ -188,10 +192,90 @@ log sv txt = do
 
 --------------------
 
+emergency ∷ WithLog μ ⇒ Text → μ ()
+emergency = log Emergency
+
+----------
+
+alert ∷ WithLog μ ⇒ Text → μ ()
+alert = log Alert
+
+----------
+
+critical ∷ WithLog μ ⇒ Text → μ ()
+critical = log Critical
+
+----------
+
+err ∷ WithLog μ ⇒ Text → μ ()
+err = log Error
+
+----------
+
+warn ∷ WithLog μ ⇒ Text → μ ()
+warn = log Warning
+
+----------
+
+notice ∷ WithLog μ ⇒ Text → μ ()
+notice = log Notice
+
+----------
+
+info ∷ WithLog μ ⇒ Text → μ ()
+info = log Informational
+
+----------
+
+debug ∷ WithLog μ ⇒ Text → μ ()
+debug = log Debug
+
+--------------------
+
 {- | Log a `Doc()` with no IO, thus no timestamp. -}
 log' ∷ WithLog μ ⇒ Severity → Doc() → μ ()
 log' sv doc = do
   logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv doc
+
+--------------------
+
+emergency' ∷ WithLog μ ⇒ Doc() → μ ()
+emergency' = log' Emergency
+
+----------
+
+alert' ∷ WithLog μ ⇒ Doc() → μ ()
+alert' = log' Alert
+
+----------
+
+critical' ∷ WithLog μ ⇒ Doc() → μ ()
+critical' = log' Critical
+
+----------
+
+err' ∷ WithLog μ ⇒ Doc() → μ ()
+err' = log' Error
+
+----------
+
+warn' ∷ WithLog μ ⇒ Doc() → μ ()
+warn' = log' Warning
+
+----------
+
+notice' ∷ WithLog μ ⇒ Doc() → μ ()
+notice' = log' Notice
+
+----------
+
+info' ∷ WithLog μ ⇒ Doc() → μ ()
+info' = log' Informational
+
+----------
+
+debug' ∷ WithLog μ ⇒ Doc() → μ ()
+debug' = log' Debug
 
 ----------------------------------------
 
