@@ -59,27 +59,27 @@ import Log.LogRenderOpts  ( logRenderOpts', renderLogWithSeverity
 
 {- | Log some text (at Informational severity); should produce at least 3 stack
      frames -}
-_sf_plus_3 ∷ WithLog μ ⇒ Text → μ ()
+_sf_plus_3 ∷ WithLog () η ⇒ Text → η ()
 _sf_plus_3 t = let -- add an additional callstack to test the formatting
-                   _sf_plus_2 ∷ WithLog μ ⇒ μ ()
-                   _sf_plus_2 = log Informational t
+                   _sf_plus_2 ∷ WithLog () η ⇒ η ()
+                   _sf_plus_2 = log Informational () t
                 in _sf_plus_2
 
-_3sf ∷ MonadLog Log μ ⇒ Maybe Text → μ ()
+_3sf ∷ MonadLog (Log ()) η ⇒ Maybe Text → η ()
 _3sf Nothing  = _sf_plus_3 "3 stack frames"
 _3sf (Just t) = _sf_plus_3 t
 
-_3sf' ∷ WithLog μ ⇒ μ ()
+_3sf' ∷ WithLog () η ⇒ η ()
 _3sf' = _3sf (Just "3 frames of stack")
 
-_4sf ∷ WithLog μ ⇒ Maybe Text → μ ()
+_4sf ∷ WithLog () η ⇒ Maybe Text → η ()
 _4sf Nothing  = _sf_plus_3 "4 stack frames"
 _4sf (Just t) = _sf_plus_3 t
 
-_4sf' ∷ MonadLog Log μ ⇒ μ ()
+_4sf' ∷ MonadLog (Log ()) η ⇒ η ()
 _4sf' = _4sf (Just "4 stack frames")
 
-_5sf ∷ WithLog μ ⇒ μ ()
+_5sf ∷ WithLog () η ⇒ η ()
 _5sf = _4sf (Just "5+ stack frames")
 
 --------------------------------------------------------------------------------

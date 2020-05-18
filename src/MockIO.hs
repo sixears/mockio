@@ -109,13 +109,13 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 -- clearer mock logging (e.g. (CMD) vs [CMD]); options handlers for logs
 -- cmd logging using showcmdforuser
 
-_li0 ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ Text
-_li0 = logIO Informational "li0" ⪼ return "Godzilla"
+_li0 ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ Text
+_li0 = logIO Informational () "li0" ⪼ return "Godzilla"
 
-_li1 ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ Text
+_li1 ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ Text
 _li1 = do
   _ ← _li0
-  logIO Informational "li1"
+  logIO Informational () "li1"
   return "MUTO"
 
 data ProcIO' ε η ω =

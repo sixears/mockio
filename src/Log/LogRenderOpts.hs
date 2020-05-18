@@ -1,5 +1,6 @@
 {-# LANGUAGE InstanceSigs      #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
@@ -26,6 +27,7 @@ import Data.Function  ( ($), flip, id )
 import Data.Functor   ( fmap )
 import Data.Maybe     ( Maybe( Nothing ) )
 import Data.String    ( String )
+import GHC.Stack      ( SrcLoc )
 import System.Exit    ( ExitCode )
 import System.IO      ( Handle, IO, stdout )
 import Text.Show      ( show )
@@ -99,7 +101,7 @@ import Data.Text  ( Text )
 
 import qualified  Log.LogEntry  as  LogEntry
 
-import Log.LogEntry      ( LogEntry, logEntry', _le0 )
+import Log.LogEntry      ( LogEntry , logEntry, _le0 )
 import Log.Render        ( renderWithCallStack, renderWithSeverity
                          , renderWithSeverityAndTimestamp
                          , renderWithSeverityAnsi, renderWithStackHead
@@ -108,7 +110,7 @@ import Log.Render        ( renderWithCallStack, renderWithSeverity
 
 --------------------------------------------------------------------------------
 
-type LogR α = (LogEntry → Doc α) → LogEntry → Doc α
+type LogR α = ∀ ω . (LogEntry ω → Doc α) → LogEntry ω → Doc α
 data LogAnnotator = LogAnnotator { _renderTTY   ∷ LogR AnsiStyle
                                  , _renderNoTTY ∷ LogR ()
                                  }
@@ -190,23 +192,23 @@ lroRenderTSSevCSH =
 
 {- | A single renderer for a LogEntry, using the renderers selected in
      LogRenderOpts. -}
-lroRenderer ∷ LogRenderOpts → LogEntry → Doc ()
+lroRenderer ∷ LogRenderOpts → LogEntry ω → Doc ()
 lroRenderer opts =
   let foldf ∷ Foldable ψ ⇒ ψ (α → α) → α → α
       foldf = flip (foldr ($))
    in foldf (_renderNoTTY ⊳ unLogRenderer (opts ⊣ logRenderer))
-            (view LogEntry.doc)
+            (view LogEntry.logdoc)
 
 {- | A single renderer for a LogEntry, using the renderers selected in
      LogRenderOpts; this one produces doc with AnsiStyle annotations for
      rendering to an ANSI-compatible terminal.
 -}
-lroRendererAnsi ∷ LogRenderOpts → LogEntry → Doc AnsiStyle
+lroRendererAnsi ∷ LogRenderOpts → LogEntry ω → Doc AnsiStyle
 lroRendererAnsi opts =
   let foldf ∷ Foldable ψ ⇒ ψ (α → α) → α → α
       foldf = flip (foldr ($))
    in foldf (_renderTTY ⊳ unLogRenderer (opts ⊣ logRenderer))
-            (reAnnotate ф ∘ view LogEntry.doc)
+            (reAnnotate ф ∘ view LogEntry.logdoc)
 
 lroRendererTests ∷ TestTree
 lroRendererTests =
@@ -307,12 +309,12 @@ renderLogWithSeverityAndTimestamp =
 
 --------------------
 
-renderLogEntriesAnsi ∷ (MonoFoldable χ, Element χ ~ LogEntry) ⇒
+renderLogEntriesAnsi ∷ (MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
                        LogRenderOpts → χ → Doc AnsiStyle
 renderLogEntriesAnsi opts =
   (⊕ line) ∘ (vsep ∘ fmap (lroRendererAnsi opts) ∘ otoList)
 
-renderIOAnsi ∷ (MonadIO μ, MonoFoldable χ, Element χ ~ LogEntry) ⇒
+renderIOAnsi ∷ (MonadIO μ, MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
                Handle → LogRenderOpts → χ → μ ()
 renderIOAnsi h o =
   liftIO ∘ renderIO h ∘ layoutPretty (o ⊣ lroOpts) ∘ renderLogEntriesAnsi o
@@ -320,7 +322,7 @@ renderIOAnsi h o =
 {-| Test ANSI rendering; designed to run just to stderr, rather than within
     a Tasty test harness -}
 ansiTests ∷ IO ()
-ansiTests = let mkle sev = logEntry' [] Nothing sev (pretty $ show sev)
+ansiTests = let mkle sev = logEntry @[(String,SrcLoc)] @() [] Nothing sev (pretty $ show sev) ()
                 logs = mkle ⊳ [ Emergency, Alert, Critical, Error, Warning
                               , Notice, Informational, Debug ]
              in renderIOAnsi stdout lroRenderSev logs

@@ -11,8 +11,9 @@ module Log
 
   , emergency, alert, critical, err, warn, notice, info, debug
   , emergency', alert', critical', err', warn', notice', info', debug'
+  , emergency_, alert_, critical_, err_, warn_, notice_, info_, debug_
 
-  , log, log', logIO, logIO', logRender, logRender'
+  , log, log', log_, logIO, logIO', logIO_, logRender, logRender'
   , logToFD', logToFD, logToFile
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
@@ -42,6 +43,10 @@ import Text.Show               ( Show )
 
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
+
+-- data-default ------------------------
+
+import Data.Default  ( Default( def ) )
 
 -- data-textual ------------------------
 
@@ -124,7 +129,8 @@ import Data.Time.Clock     ( getCurrentTime )
 --                     local imports                       -
 ------------------------------------------------------------
 
-import Log.LogEntry       ( LogEntry, logEntry, _le0, _le1, _le2, _le3  )
+import Log.LogEntry       ( LogEntry, LogEntry
+                          , logEntry, _le0, _le1, _le2, _le3  )
 import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
                           , logRenderOpts', lroOpts, lroRenderer
                           , lroRendererAnsi
@@ -136,7 +142,7 @@ import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
 --------------------------------------------------------------------------------
 
 {- | A list of LogEntries. -}
-newtype Log = Log { unLog ∷ DList LogEntry }
+newtype Log ω = Log { unLog ∷ DList (LogEntry ω) }
   deriving (Monoid,Semigroup,Show)
 
 {- | `WithLog` adds in the `CallStack` constraint, so that if you declare your
@@ -145,13 +151,13 @@ newtype Log = Log { unLog ∷ DList LogEntry }
      the callpoint from within the function lacking the constraint (and anything
      calling it) will not be shown in the callstack.
  -}
-type WithLog   η = (MonadLog Log η, ?stack ∷ CallStack)
+type WithLog α η = (MonadLog (Log α) η, ?stack ∷ CallStack)
 {- | `WithLog`, but with MonadIO, too. -}
-type WithLogIO μ = (MonadIO μ, MonadLog Log μ, ?stack ∷ CallStack)
+type WithLogIO α μ = (MonadIO μ, MonadLog (Log α) μ, ?stack ∷ CallStack)
 
-type instance Element Log = LogEntry
+type instance Element (Log ω) = LogEntry ω
 
-instance MonoFoldable Log where
+instance MonoFoldable (Log ω) where
   otoList    (Log dl)     = toList dl
   ofoldl'    f x (Log dl) = foldl' f x dl
   ofoldr     f x (Log dl) = foldr  f x dl
@@ -159,128 +165,184 @@ instance MonoFoldable Log where
   ofoldr1Ex  f (Log dl)   = foldr1 f dl
   ofoldl1Ex' f (Log dl)   = foldl1 f dl
 
-instance MonoFunctor Log where
+instance MonoFunctor (Log ω) where
   omap f (Log dl) = Log (f ⊳ dl)
 
-instance Printable Log where
+instance Printable ω ⇒ Printable (Log ω) where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
 ------------------------------------------------------------
 
 {- | Log a `Doc()` with a timestamp, thus causing IO. -}
-logIO' ∷ WithLogIO μ ⇒ Severity → Doc () → μ ()
-logIO' sv doc = do
+logIO_ ∷ WithLogIO ω μ ⇒ Severity → ω → Doc () → μ ()
+logIO_ sv payload doc = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv doc
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv doc payload
 
 --------------------
 
--- We redefine this, rather than simply calling logIO', so as to not mess with
+-- We redefine this, rather than simply calling logIO_, so as to not mess with
 -- the callstack.
 {- | Log with a timestamp, thus causing IO. -}
-logIO ∷ WithLogIO μ ⇒ Severity → Text → μ ()
-logIO sv txt = do
+logIO ∷ WithLogIO ω μ ⇒ Severity → ω → Text → μ ()
+logIO sv p txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt)
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt) p
+
+--------------------
+
+-- We redefine this, rather than simply calling logIO, so as to not mess with
+-- the callstack.
+{- | Log with a timestamp, thus causing IO. -}
+logIO' ∷ (WithLogIO ω μ, Default ω) ⇒ Severity → Text → μ ()
+logIO' sv txt = do
+  tm ← liftIO getCurrentTime
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt) def
 
 ----------------------------------------
 
 {- | Log with no IO, thus no timestamp. -}
-log ∷ WithLog μ ⇒ Severity → Text → μ ()
-log sv txt = do
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt)
+log ∷ WithLog ω η ⇒ Severity → ω → Text → η ()
+log sv p txt = do
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt) p
+
+----------
+
+log' ∷ (WithLog ω η, Default ω) ⇒ Severity → Text → η ()
+log' sv txt = do
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt) def
 
 --------------------
 
-emergency ∷ WithLog μ ⇒ Text → μ ()
+emergency ∷ WithLog ω η ⇒ ω → Text → η ()
 emergency = log Emergency
 
 ----------
 
-alert ∷ WithLog μ ⇒ Text → μ ()
+emergency' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+emergency' = log Emergency def
+
+----------
+
+alert ∷ WithLog ω η ⇒ ω → Text → η ()
 alert = log Alert
 
 ----------
 
-critical ∷ WithLog μ ⇒ Text → μ ()
+alert' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+alert' = log Alert def
+
+----------
+
+critical ∷ WithLog ω η ⇒ ω → Text → η ()
 critical = log Critical
 
 ----------
 
-err ∷ WithLog μ ⇒ Text → μ ()
+critical' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+critical' = log Critical def
+
+----------
+
+err ∷ WithLog ω η ⇒ ω → Text → η ()
 err = log Error
 
 ----------
 
-warn ∷ WithLog μ ⇒ Text → μ ()
+err' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+err' = log Error def
+
+----------
+
+warn ∷ WithLog ω η ⇒ ω → Text → η ()
 warn = log Warning
 
 ----------
 
-notice ∷ WithLog μ ⇒ Text → μ ()
+warn' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+warn' = log Warning def
+
+----------
+
+notice ∷ WithLog ω η ⇒ ω → Text → η ()
 notice = log Notice
 
 ----------
 
-info ∷ WithLog μ ⇒ Text → μ ()
+notice' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+notice' = log Notice def
+
+----------
+
+info ∷ WithLog ω η ⇒ ω → Text → η ()
 info = log Informational
 
 ----------
 
-debug ∷ WithLog μ ⇒ Text → μ ()
+info' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+info' = log Informational def
+
+----------
+
+debug ∷ WithLog ω η ⇒ ω → Text → η ()
 debug = log Debug
+
+----------
+
+debug' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+debug' = log Debug def
 
 --------------------
 
 {- | Log a `Doc()` with no IO, thus no timestamp. -}
-log' ∷ WithLog μ ⇒ Severity → Doc() → μ ()
-log' sv doc = do
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv doc
+log_ ∷ WithLog ω μ ⇒ Severity → ω → Doc() → μ ()
+log_ sv payload doc = do
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv doc payload
 
 --------------------
 
-emergency' ∷ WithLog μ ⇒ Doc() → μ ()
-emergency' = log' Emergency
+emergency_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+emergency_ = log_ Emergency
 
 ----------
 
-alert' ∷ WithLog μ ⇒ Doc() → μ ()
-alert' = log' Alert
+alert_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+alert_ = log_ Alert
 
 ----------
 
-critical' ∷ WithLog μ ⇒ Doc() → μ ()
-critical' = log' Critical
+critical_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+critical_ = log_ Critical
 
 ----------
 
-err' ∷ WithLog μ ⇒ Doc() → μ ()
-err' = log' Error
+err_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+err_ = log_ Error
 
 ----------
 
-warn' ∷ WithLog μ ⇒ Doc() → μ ()
-warn' = log' Warning
+warn_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+warn_ = log_ Warning
 
 ----------
 
-notice' ∷ WithLog μ ⇒ Doc() → μ ()
-notice' = log' Notice
+notice_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+notice_ = log_ Notice
 
 ----------
 
-info' ∷ WithLog μ ⇒ Doc() → μ ()
-info' = log' Informational
+info_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+info_ = log_ Informational
 
 ----------
 
-debug' ∷ WithLog μ ⇒ Doc() → μ ()
-debug' = log' Debug
+debug_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
+debug_ = log_ Debug
 
 ----------------------------------------
 
 {- | Transform a monad ready to return (rather than effect) the logging. -}
-logRender ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η α → η (α, DList Text)
+logRender ∷ Monad η ⇒ LogRenderOpts → PureLoggingT (Log ω) η α → η (α, DList Text)
 logRender opts a = do
   let renderer = lroRenderer opts
   (a',ls) ← runPureLoggingT a
@@ -292,7 +354,8 @@ logRender opts a = do
 --------------------
 
 {- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
-logRender' ∷ Monad η ⇒ LogRenderOpts → PureLoggingT Log η () → η (DList Text)
+logRender' ∷ Monad η ⇒
+             LogRenderOpts → PureLoggingT (Log ω) η () → η (DList Text)
 logRender' = fmap snd ⩺ logRender
 
 ----------------------------------------
@@ -339,11 +402,11 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 100_000
 {- | Write a Log to a filehandle, with given rendering and options. -}
 logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
               (Handle → SimpleDocStream ρ → IO()) -- ^ write an SDSρ to Handle
-            → (LogEntry → Doc ρ)                  -- ^ render a LogEntry
+            → (LogEntry ω → Doc ρ)                -- ^ render a LogEntry
             → BatchingOptions
             → PageWidth
             → Handle
-            → LoggingT Log μ α
+            → LoggingT (Log ω) μ α
             → μ α
 logToHandle renderIO renderEntry bopts width fh io =
   let renderDoc   = vsep ∘ fmap renderEntry ∘ otoList
@@ -357,7 +420,7 @@ logToHandleNoAdornments ∷ (MonadIO μ, MonadMask μ) ⇒
                           BatchingOptions
                         → LogRenderOpts
                         → Handle
-                        → LoggingT Log μ α
+                        → LoggingT (Log ω) μ α
                         → μ α
 logToHandleNoAdornments bopts lro =
   logToHandle RenderText.renderIO (lroRenderer lro) bopts (lro ⊣ lroWidth)
@@ -366,7 +429,10 @@ logToHandleNoAdornments bopts lro =
 
 {- | Write a Log to a filehandle, with given options and Ansi adornments. -}
 logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
-                  BatchingOptions → LogRenderOpts → Handle → LoggingT Log μ α
+                  BatchingOptions
+                → LogRenderOpts
+                → Handle
+                → LoggingT (Log ω) μ α
                 → μ α
 logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
                                         (lroRendererAnsi lro) bopts
@@ -375,7 +441,7 @@ logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
 
 {- | Log to a regular file, with unbounded width. -}
 logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+            [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
 logToFile' ls = let lro = logRenderOpts' ls Unbounded
                  in logToHandleNoAdornments fileBatchingOptions lro
 
@@ -383,7 +449,7 @@ logToFile' ls = let lro = logRenderOpts' ls Unbounded
 
 {- | Log to a tty, using current terminal width. -}
 logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+            [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
 logToTTY' ls h io = do
   size ← liftIO $ TerminalSize.size
   let lro = case size of
@@ -397,7 +463,7 @@ logToTTY' ls h io = do
 {- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
      batch time; else go unadorned with higher batch time. -}
 logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
-           [LogAnnotator] → Handle → LoggingT Log μ α → μ α
+           [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
 logToFD' ls h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
@@ -409,7 +475,8 @@ logToFD' ls h io = do
 data CSOpt = NoCallStack | CallStackHead | FullCallStack
 
 {- | Log to a plain file with given callstack choice. -}
-logToFile ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
+logToFile ∷ (MonadIO μ, MonadMask μ) ⇒
+            CSOpt → Handle → LoggingT (Log ω) μ α → μ α
 logToFile NoCallStack   =
   logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ]
 logToFile CallStackHead = 
@@ -422,7 +489,8 @@ logToFile FullCallStack =
 --------------------
 
 {- | Log to a terminal with given callstack choice. -}
-logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → Handle → LoggingT Log μ α → μ α
+logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒
+           CSOpt → Handle → LoggingT (Log ω) μ α → μ α
 logToTTY NoCallStack   =
   logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ]
 logToTTY CallStackHead = 
@@ -437,7 +505,7 @@ logToTTY FullCallStack =
 {- | Log to a file handle; if it looks like a terminal, use Ansi logging and
      current terminal width; else go unadorned with unbounded width. -}
 logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
-          CSOpt → Handle → LoggingT Log μ α → μ α
+          CSOpt → Handle → LoggingT (Log ω) μ α → μ α
 logToFD cso h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
@@ -447,11 +515,11 @@ logToFD cso h io = do
 ----------------------------------------
 
 {- | Log to stderr, assuming it's a terminal, with given callstack choice. -}
-logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → LoggingT Log μ α → μ α
+logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒ CSOpt → LoggingT (Log ω) μ α → μ α
 logToStderr cso = logToTTY cso stderr
 
 {- | Log to a handle, assuming it's a terminal, with no log decorations. -}
-logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒ Handle → LoggingT Log μ α → μ α
+logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒ Handle → LoggingT (Log ω) μ α → μ α
 logToTTYPlain = logToTTY' []
 
 --------------------------------------------------------------------------------
@@ -460,22 +528,22 @@ logToTTYPlain = logToTTY' []
 
 -- test data ---------------------------
 
-_log0 ∷ Log
+_log0 ∷ (Log ())
 _log0 = Log $ fromList [_le0]
 
-_log0m ∷ MonadLog Log η ⇒ η ()
+_log0m ∷ MonadLog (Log ()) η ⇒ η ()
 _log0m = logMessage _log0
 
-_log1 ∷ Log
+_log1 ∷ (Log ())
 _log1 = Log $ fromList [ _le0, _le1, _le2, _le3 ]
 
-_log1m ∷ MonadLog Log η ⇒ η ()
+_log1m ∷ MonadLog (Log ()) η ⇒ η ()
 _log1m = logMessage _log1
 
-_log0io ∷ (MonadIO μ, MonadLog Log μ) ⇒ μ ()
-_log0io = do logIO Warning "start"
+_log0io ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ ()
+_log0io = do logIO Warning () "start"
              liftIO $ threadDelay 2_000_000
-             logIO Critical "end"
+             logIO Critical () "end"
 
 -- tests -------------------------------
 
