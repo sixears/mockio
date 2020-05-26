@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE InstanceSigs      #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
@@ -14,18 +15,26 @@ import Data.Bool            ( Bool( False, True ), not, otherwise )
 import Control.Applicative  ( Applicative, (<*>), pure )
 import Control.Monad        ( Monad, (>>=), return )
 import Data.Eq              ( Eq )
-import Data.Function        ( ($), const, id )
+import Data.Function        ( ($), (&), const, id )
 import Data.Functor         ( Functor, fmap )
+import Data.Maybe           ( Maybe( Just, Nothing ) )
 import Data.Monoid          ( Monoid )
 import Data.String          ( String )
 import GHC.Exts             ( fromList )
+import GHC.Stack            ( SrcLoc( SrcLoc ) )
 import System.Exit          ( ExitCode )
 import System.IO            ( FilePath, IO )
 import Text.Show            ( Show )
 
 -- base-unicode-symbols ----------------
 
+import Data.Eq.Unicode        ( (≡) )
+import Data.Monoid.Unicode    ( (⊕) )
 import Data.Function.Unicode  ( (∘) )
+
+-- data-default ------------------------
+
+import Data.Default  ( Default( def ) )
 
 -- dlist -------------------------------
 
@@ -37,7 +46,9 @@ import Control.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log  ( Log, logIO )
+import Log           ( Log, fromList, logIO, logIO', logIOT )
+import Log.Equish    ( Equish( (≃) ) )
+import Log.LogEntry  ( logEntry )
 
 -- logging-effect ----------------------
 
@@ -51,7 +62,7 @@ import MonadIO  ( MonadIO, liftIO )
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
-import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Lens     ( (⊣), (⊢) )
 import Data.MoreUnicode.Monad    ( (⪼) )
 import Data.MoreUnicode.Monoid   ( ю )
 import Data.MoreUnicode.Natural  ( ℕ )
@@ -67,7 +78,7 @@ import Control.Monad.Writer  ( MonadWriter, runWriterT, tell )
 
 import Data.Text.Prettyprint.Doc  ( SimpleDocStream(..)
                                   , annotate, defaultLayoutOptions, hsep
-                                  , layoutPretty, line
+                                  , layoutPretty, line, pretty
                                   )
 
 -- streaming ---------------------------
@@ -80,7 +91,7 @@ import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( (@=?), testCase )
+import Test.Tasty.HUnit  ( (@=?), assertBool, testCase )
 
 -- tasty-plus --------------------------
 
@@ -89,8 +100,16 @@ import TastyPlus2  ( withResource2' )
 
 -- text --------------------------------
 
-import Data.Text     ( Text )
+import Data.Text     ( Text, pack )
 import Data.Text.IO  ( readFile )
+
+-- time --------------------------------
+
+import Data.Time.Clock  ( UTCTime, getCurrentTime )
+
+-- tfmt --------------------------------
+
+import Text.Fmt  ( fmt )
 
 ------------------------------------------------------------
 --                     local imports                      --
@@ -110,12 +129,12 @@ import ProcLib.Types.ProcIOAction     ( ProcIOAction )
 -- cmd logging using showcmdforuser
 
 _li0 ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ Text
-_li0 = logIO Informational () "li0" ⪼ return "Godzilla"
+_li0 = logIOT Informational "li0" ⪼ return "Godzilla"
 
 _li1 ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ Text
 _li1 = do
   _ ← _li0
-  logIO Informational () "li1"
+  logIOT Informational "li1"
   return "MUTO"
 
 data ProcIO' ε η ω =
@@ -164,6 +183,14 @@ data DoMock = DoMock | NoMock
 mkIO' ∷ (MonadIO μ, MonadLog τ μ) ⇒ (DoMock → τ) → ω → IO ω → DoMock → μ ω
 mkIO' log mock_value io mock = do
   logMessage (log mock)
+  case mock of
+    NoMock → liftIO io
+    DoMock → return mock_value
+
+mkIORead ∷ (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
+           (DoMock → Text) → α → IO α → DoMock → μ α
+mkIORead log mock_value io mock = do
+  logIO Informational (def & ioClass ⊢ IORead) (log mock)
   case mock of
     NoMock → liftIO io
     DoMock → return mock_value
@@ -336,7 +363,14 @@ data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
              | IOCmdW  -- ^ An external cmd (results in an execve or fork call)
                        --   that may alter state
              | IOExec  -- ^ An exec (replaces this executable)
+             | NoIO    -- ^ no IO
   deriving (Eq,Show)
+
+instance Default IOClass where
+  def = NoIO
+
+instance Equish IOClass where
+  i ≃ i' = i ≡ i'
 
 class HasIOClass α where
   ioClass ∷ Lens' α IOClass
@@ -366,8 +400,36 @@ logMsg sv clss msg = fromList [WithSeverity sv (SimpleLogEntry(clss,msg))]
 logInfo ∷ IOClass → Text → DList (WithSeverity SimpleLogEntry)
 logInfo = logMsg Informational
 
+{- This exists here for testing only; real file reading/writing will be in a
+   different package. -}
+-- enhancements: toDoc(), set mock text
+readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
+         String → DoMock → μ Text
+readFn s = mkIORead (const $ [fmt|read %s|] s) "mock text" (readFile s)
+
 logMsgTests ∷ TestTree
 logMsgTests =
+  let -- helloEnt = fromList [ WithSeverity Informational $ SimpleLogEntry(IORead,"hello") ]
+      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, SimpleLog)
+      readFn' fn mock = runPureLoggingT (mkIO' (const $ logInfo IORead "hello")
+                                               "mockety" (readFile fn) mock)
+      my_log_entry t = logEntry [("logIO"∷String,SrcLoc "main" "MockIO" "src/MockIO.hs" 193 3 193 58)] (Just t) Informational (pretty @Text "read /etc/subgid") IORead
+      my_log ∷ UTCTime → Log IOClass
+      my_log t = fromList [ my_log_entry t ]
+   in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/subgid" NoMock)
+                     (readFile "/etc/subgid") $ \ txtlog exptxt →
+        testGroup "logMsg"
+                  [ testCase "txt" $ do (txt,_) ← txtlog
+                                        exp ← exptxt
+                                        exp ≟ txt
+                  , testCase "log" $ do (_,lg) ← txtlog
+                                        t ← getCurrentTime
+                                        assertBool ([fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (my_log t) lg)
+                                                   (my_log t ≃ lg)
+                  ]
+
+oldLogMsgTests ∷ TestTree
+oldLogMsgTests =
   let helloEnt = fromList [ WithSeverity Informational $ SimpleLogEntry(IORead,"hello") ]
       readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, SimpleLog)
       readFn' fn mock = runPureLoggingT (mkIO' (const $ logInfo IORead "hello")

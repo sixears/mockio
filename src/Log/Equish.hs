@@ -1,19 +1,19 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
-module Data.MoreUnicode.Doc
-  ( (⊞) )
+module Log.Equish
+  ( Equish( (≃) ) )
 where
 
--- Prettyprinter -----------------------
+-- base --------------------------------
 
-import Data.Text.Prettyprint.Doc  ( Doc, (<+>) )
+import Data.Bool  ( Bool )
 
 --------------------------------------------------------------------------------
 
-infixr 5 ⊞
--- hsep
-(⊞) ∷ Doc α → Doc α → Doc α
-(⊞) = (<+>)
+{- | Approximately equal; FOR TESTING ONLY -}
+infix 4 ≃
+class Equish α where
+  (≃) ∷ α → α → Bool
 
 -- that's all, folks! ----------------------------------------------------------

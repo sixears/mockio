@@ -8,13 +8,19 @@ where
 
 -- base --------------------------------
 
+import Data.Bool      ( Bool( False, True ) )
+import Data.Eq        ( Eq( (==) ) )
 import Data.Function  ( ($) )
 import Data.Maybe     ( Maybe( Just, Nothing ) )
+import Data.Ord       ( (<) )
+import GHC.Num        ( abs )
 import GHC.Stack      ( CallStack, SrcLoc( SrcLoc ), fromCallSiteList )
 import Text.Show      ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
+import Data.Bool.Unicode     ( (∧) )
+import Data.Eq.Unicode       ( (≡) )
 import Data.Function.Unicode ( (∘) )
 
 -- data-textual ------------------------
@@ -56,13 +62,15 @@ import Text.Fmt2  ( fmt )
 -- time --------------------------------
 
 import Data.Time.Calendar  ( fromGregorian )
-import Data.Time.Clock     ( UTCTime( UTCTime ), secondsToDiffTime )
+import Data.Time.Clock     ( UTCTime( UTCTime ), diffUTCTime,secondsToDiffTime )
 
 ------------------------------------------------------------
---                     local imports                      --
-------------------------------------------------------------
+--                     local imports                      ---
+-----------------------------------------------------------
 
-import Log.HasCallstack  ( HasCallstack( callstack ), stackHeadTxt )
+import Log.Equish        ( Equish( (≃) ) )
+import Log.HasCallstack  ( HasCallstack( callsitelist, callstack )
+                         , stackHeadTxt )
 import Log.HasSeverity   ( HasSeverity( severity ) )
 import Log.HasUTCTime    ( HasUTCTimeY( utcTimeY ) )
 
@@ -76,6 +84,29 @@ data LogEntry ω = LogEntry { _callstack ∷ CallStack
                            , _attrs     ∷ ω
                            }
   deriving Show
+
+instance Eq ω ⇒ Eq (LogEntry ω) where
+  le == le' = let simpleDoc l = layoutPretty defaultLayoutOptions (l ⊣ logdoc)
+               in   le ⊣ callsitelist ≡ le' ⊣ callsitelist
+                  ∧ le ⊣ utcTimeY     ≡ le' ⊣ utcTimeY
+                  ∧ le ⊣ severity     ≡ le' ⊣ severity
+                  ∧ simpleDoc le      ≡ simpleDoc le'
+                  ∧ le ⊣ attrs        ≡ le' ⊣ attrs
+
+instance Equish ω ⇒ Equish (LogEntry ω) where
+  {- | Approximately equal; that is, equal but with timestamps differing by no
+       more than 10s (absolute). -}
+  le ≃ le' = let simpleDoc l = layoutPretty defaultLayoutOptions (l ⊣ logdoc)
+              in   le ⊣ callsitelist ≡ le' ⊣ callsitelist
+                 ∧ (case ((le ⊣ utcTimeY), (le' ⊣ utcTimeY)) of
+                      (Nothing, Nothing) → True
+                      (Just t,  Just t') → abs (diffUTCTime t t') < 10
+                      (_, _)             → False
+                   )
+
+                 ∧ le ⊣ severity     ≡ le' ⊣ severity
+                 ∧ simpleDoc le      ≡ simpleDoc le'
+                 ∧ le ⊣ attrs        ≃ le' ⊣ attrs
 
 attrs ∷ Lens' (LogEntry ω) ω
 attrs = lens _attrs (\ le as → le { _attrs = as })

@@ -1,19 +1,24 @@
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImplicitParams             #-}
+{-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UnicodeSyntax              #-}
+{-# LANGUAGE ViewPatterns               #-}
 
 module Log
   ( Log, WithLog, WithLogIO
 
   , emergency, alert, critical, err, warn, notice, info, debug
   , emergency', alert', critical', err', warn', notice', info', debug'
-  , emergency_, alert_, critical_, err_, warn_, notice_, info_, debug_
+  , emergencyT, alertT, criticalT, errT, warnT, noticeT, infoT, debugT
 
-  , log, log', log_, logIO, logIO', logIO_, logRender, logRender'
+  , fromList
+  , log, log', logT, logIO, logIO', logIOT, logRender, logRender'
   , logToFD', logToFD, logToFile
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
@@ -21,19 +26,24 @@ where
 
 -- base --------------------------------
 
+import qualified  Data.Foldable  as  Foldable
+
 import Control.Concurrent      ( threadDelay )
 import Control.Monad           ( Monad, return )
 import Control.Monad.Identity  ( runIdentity )
 import Data.Bool               ( Bool( False, True ) )
-import Data.Foldable           ( Foldable
-                               , foldl', foldl1, foldMap, foldr, foldr1,toList )
-import Data.Function           ( ($) )
+import Data.Eq                 ( Eq )
+import Data.Foldable           ( Foldable, all, foldl', foldl1
+                               , foldMap, foldr, foldr1, length )
+import Data.Function           ( ($), id )
 import Data.Functor            ( fmap )
+import Data.List               ( zip )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.Monoid             ( Monoid )
 import Data.Semigroup          ( Semigroup )
 import Data.String             ( String )
 import Data.Tuple              ( snd )
+import GHC.Exts                ( IsList( Item, fromList, toList ) )
 import GHC.Stack               ( CallStack )
 import System.Exit             ( ExitCode )
 import System.IO               ( Handle, IO, hFlush, hIsTerminalDevice, stderr )
@@ -41,6 +51,8 @@ import Text.Show               ( Show )
 
 -- base-unicode-symbols ----------------
 
+import Data.Bool.Unicode      ( (∧) )
+import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 
@@ -54,7 +66,8 @@ import Data.Textual  ( Printable( print ), toText )
 
 -- dlist -------------------------------
 
-import Data.DList  ( DList, fromList, singleton )
+import qualified  Data.DList  as  DList
+import Data.DList  ( DList, singleton )
 
 -- exceptions --------------------------
 
@@ -78,7 +91,8 @@ import MonadIO  ( MonadIO, liftIO )
 
 import Data.MonoTraversable  ( Element
                              , MonoFoldable( ofoldl', ofoldl1Ex', ofoldr
-                                           , ofoldr1Ex , ofoldMap, otoList )
+                                           , ofoldr1Ex , ofoldMap, olength
+                                           , otoList )
                              , MonoFunctor( omap )
                              )
 
@@ -129,6 +143,7 @@ import Data.Time.Clock     ( getCurrentTime )
 --                     local imports                       -
 ------------------------------------------------------------
 
+import Log.Equish         ( Equish( (≃) ) )
 import Log.LogEntry       ( LogEntry, LogEntry
                           , logEntry, _le0, _le1, _le2, _le3  )
 import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
@@ -143,7 +158,7 @@ import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
 
 {- | A list of LogEntries. -}
 newtype Log ω = Log { unLog ∷ DList (LogEntry ω) }
-  deriving (Monoid,Semigroup,Show)
+  deriving (Eq,Monoid,Semigroup,Show)
 
 {- | `WithLog` adds in the `CallStack` constraint, so that if you declare your
      function to use this constraint, your function will be included in the
@@ -171,173 +186,197 @@ instance MonoFunctor (Log ω) where
 instance Printable ω ⇒ Printable (Log ω) where
   print = P.text ∘ unlines ∘ toList ∘ fmap toText ∘ unLog
 
+instance Equish ω ⇒ Equish (Log ω) where
+  l ≃ l' = olength l ≡ olength l'
+         ∧ all (\ (x,x') → x ≃ x') (zip (otoList l) (otoList l'))
+
 ------------------------------------------------------------
 
-{- | Log a `Doc()` with a timestamp, thus causing IO. -}
-logIO_ ∷ WithLogIO ω μ ⇒ Severity → ω → Doc () → μ ()
-logIO_ sv payload doc = do
-  tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv doc payload
+{- | This is called `ToDoc_` with an underscore to distinguish from any `ToDoc`
+     class that took a parameter for the annotation type. -}
+class ToDoc_ α where
+  toDoc_ ∷ α → Doc ()
 
---------------------
+instance ToDoc_ Text where
+  toDoc_ = pretty
 
--- We redefine this, rather than simply calling logIO_, so as to not mess with
--- the callstack.
+instance ToDoc_ (Doc()) where
+  toDoc_ = id
+
+------------------------------------------------------------
+
+instance IsList (Log ω) where
+  type Item (Log ω) = LogEntry ω
+  fromList ∷ [LogEntry ω] → Log ω
+  fromList ls = Log (DList.fromList ls)
+  toList (Log ls) = DList.toList ls
+
+----------------------------------------
+
 {- | Log with a timestamp, thus causing IO. -}
-logIO ∷ WithLogIO ω μ ⇒ Severity → ω → Text → μ ()
+logIO ∷ (WithLogIO ω μ, ToDoc_ ρ) ⇒ Severity → ω → ρ → μ ()
 logIO sv p txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt) p
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (toDoc_ txt) p
 
 --------------------
 
 -- We redefine this, rather than simply calling logIO, so as to not mess with
 -- the callstack.
 {- | Log with a timestamp, thus causing IO. -}
-logIO' ∷ (WithLogIO ω μ, Default ω) ⇒ Severity → Text → μ ()
+logIO' ∷ ∀ ρ ω μ . (WithLogIO ω μ, ToDoc_ ρ, Default ω) ⇒ Severity → ρ → μ ()
 logIO' sv txt = do
   tm ← liftIO getCurrentTime
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (pretty txt) def
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (toDoc_ txt) def
+
+----------------------------------------
+
+-- We redefine this, rather than simply calling logIO, so as to not mess with
+-- the callstack.
+{- | Log `Text` with a timestamp, thus causing IO. -}
+logIOT ∷ ∀ ω μ . (WithLogIO ω μ, Default ω) ⇒ Severity → Text → μ ()
+logIOT sv txt = do
+  tm ← liftIO getCurrentTime
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack (Just tm) sv (toDoc_ txt) def
 
 ----------------------------------------
 
 {- | Log with no IO, thus no timestamp. -}
-log ∷ WithLog ω η ⇒ Severity → ω → Text → η ()
-log sv p txt = do
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt) p
+log ∷ (WithLog ω η, ToDoc_ ρ) ⇒ Severity → ω → ρ → η ()
+log sv p txt =
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (toDoc_ txt) p
 
 ----------
 
-log' ∷ (WithLog ω η, Default ω) ⇒ Severity → Text → η ()
+log' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ Severity → ρ → η ()
 log' sv txt = do
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (pretty txt) def
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (toDoc_ txt) def
+
+----------
+
+logT ∷ (WithLog ω η, Default ω) ⇒ Severity → Text → η ()
+logT sv txt =
+  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv (toDoc_ txt) def
 
 --------------------
 
-emergency ∷ WithLog ω η ⇒ ω → Text → η ()
+emergency ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 emergency = log Emergency
 
 ----------
 
-emergency' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+emergency' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 emergency' = log Emergency def
 
 ----------
 
-alert ∷ WithLog ω η ⇒ ω → Text → η ()
+emergencyT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+emergencyT = emergency'
+
+----------
+
+alert ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 alert = log Alert
 
 ----------
 
-alert' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+alert' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 alert' = log Alert def
 
 ----------
 
-critical ∷ WithLog ω η ⇒ ω → Text → η ()
+alertT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+alertT = alert'
+
+----------
+
+critical ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 critical = log Critical
 
 ----------
 
-critical' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+critical' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 critical' = log Critical def
 
 ----------
 
-err ∷ WithLog ω η ⇒ ω → Text → η ()
+criticalT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+criticalT = critical'
+
+----------
+
+err ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 err = log Error
 
 ----------
 
-err' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+err' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 err' = log Error def
 
 ----------
 
-warn ∷ WithLog ω η ⇒ ω → Text → η ()
+errT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+errT = err'
+
+----------
+
+warn ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 warn = log Warning
 
 ----------
 
-warn' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+warn' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 warn' = log Warning def
 
 ----------
 
-notice ∷ WithLog ω η ⇒ ω → Text → η ()
+warnT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+warnT = warn'
+
+----------
+
+notice ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 notice = log Notice
 
 ----------
 
-notice' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+notice' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 notice' = log Notice def
 
 ----------
 
-info ∷ WithLog ω η ⇒ ω → Text → η ()
+noticeT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+noticeT = notice'
+
+----------
+
+info ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 info = log Informational
 
 ----------
 
-info' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+info' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 info' = log Informational def
 
 ----------
 
-debug ∷ WithLog ω η ⇒ ω → Text → η ()
+infoT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+infoT = info'
+
+----------
+
+debug ∷ (WithLog ω η, ToDoc_ ρ) ⇒ ω → ρ → η ()
 debug = log Debug
 
 ----------
 
-debug' ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+debug' ∷ (WithLog ω η, ToDoc_ ρ, Default ω) ⇒ ρ → η ()
 debug' = log Debug def
 
---------------------
-
-{- | Log a `Doc()` with no IO, thus no timestamp. -}
-log_ ∷ WithLog ω μ ⇒ Severity → ω → Doc() → μ ()
-log_ sv payload doc = do
-  logMessage ∘ Log ∘ singleton $ logEntry ?stack Nothing sv doc payload
-
---------------------
-
-emergency_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-emergency_ = log_ Emergency
-
 ----------
 
-alert_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-alert_ = log_ Alert
-
-----------
-
-critical_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-critical_ = log_ Critical
-
-----------
-
-err_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-err_ = log_ Error
-
-----------
-
-warn_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-warn_ = log_ Warning
-
-----------
-
-notice_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-notice_ = log_ Notice
-
-----------
-
-info_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-info_ = log_ Informational
-
-----------
-
-debug_ ∷ WithLog ω μ ⇒ ω → Doc() → μ ()
-debug_ = log_ Debug
+debugT ∷ (WithLog ω η, Default ω) ⇒ Text → η ()
+debugT = debug'
 
 ----------------------------------------
 
@@ -371,8 +410,9 @@ withFDHandler ∷ (MonadIO μ, MonadMask μ) ⇒
               → (Handler μ (Doc ρ) -> μ α)
               → μ α
 withFDHandler r pw bopts fd handler =
-  let layout ∷ (Foldable ψ) ⇒ ψ (Doc π) → SimpleDocStream π
-      layout ms = layoutPretty (LayoutOptions pw) (vsep (toList ms) ⊕ line')
+  let layout ∷ Foldable ψ ⇒ ψ (Doc π) → SimpleDocStream π
+      layout ms = layoutPretty (LayoutOptions pw)
+                               (vsep (Foldable.toList ms) ⊕ line')
       flush messages = r fd (layout messages) ⪼ hFlush fd
    in withBatchedHandler bopts flush handler
 
@@ -529,21 +569,21 @@ logToTTYPlain = logToTTY' []
 -- test data ---------------------------
 
 _log0 ∷ (Log ())
-_log0 = Log $ fromList [_le0]
+_log0 = fromList [_le0]
 
 _log0m ∷ MonadLog (Log ()) η ⇒ η ()
 _log0m = logMessage _log0
 
 _log1 ∷ (Log ())
-_log1 = Log $ fromList [ _le0, _le1, _le2, _le3 ]
+_log1 = fromList [ _le0, _le1, _le2, _le3 ]
 
 _log1m ∷ MonadLog (Log ()) η ⇒ η ()
 _log1m = logMessage _log1
 
 _log0io ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ ()
-_log0io = do logIO Warning () "start"
+_log0io = do logIO' @Text Warning "start"
              liftIO $ threadDelay 2_000_000
-             logIO Critical () "end"
+             logIO' @Text Critical "end"
 
 -- tests -------------------------------
 

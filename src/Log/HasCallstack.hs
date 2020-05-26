@@ -3,13 +3,13 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module Log.HasCallstack
-  ( HasCallstack( callstack ), stackHead, stackHeadTxt )
+  ( HasCallstack( callsitelist, callstack ), stackHead, stackHeadTxt )
 where
 
 -- base --------------------------------
 
 import Data.Bifunctor  ( first )
-import Data.Function   ( ($), const, id )
+import Data.Function   ( ($), (&), const, id )
 import Data.Functor    ( fmap )
 import Data.Maybe      ( Maybe( Just, Nothing ) )
 import Data.String     ( String )
@@ -28,6 +28,7 @@ import Control.Lens  ( Lens', lens, view )
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Functor  ( (⩺) )
+import Data.MoreUnicode.Lens     ( (⊣), (⊢) )
 
 -- safe --------------------------------
 
@@ -44,7 +45,12 @@ import Text.Fmt  ( fmt )
 --------------------------------------------------------------------------------
 
 class HasCallstack α where
-  callstack ∷ Lens' α CallStack
+  -- we can't call this callStack because that's already defined in GHC.Stack
+  callstack    ∷ Lens' α CallStack
+  -- all lowercase for consistency with callstack
+  callsitelist ∷ Lens' α [(String,SrcLoc)]
+  callsitelist = lens (\ a → getCallStack $ a ⊣ callstack)
+                      (\ a csl → a & callstack ⊢ (fromCallSiteList csl))
 
 instance HasCallstack CallStack where
   callstack = id
