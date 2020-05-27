@@ -7,9 +7,7 @@ where
 
 -- base --------------------------------
 
-import Control.Applicative    ( many )
-import Data.Char              ( Char )
-import Data.Function          ( ($) )
+import Control.Applicative  ( many )
 
 -- more-unicode ------------------------
 

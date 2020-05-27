@@ -34,7 +34,7 @@ import Control.Monad.Identity  ( runIdentity )
 import Data.Bool               ( Bool( False, True ) )
 import Data.Eq                 ( Eq )
 import Data.Foldable           ( Foldable, all, foldl', foldl1
-                               , foldMap, foldr, foldr1, length )
+                               , foldMap, foldr, foldr1 )
 import Data.Function           ( ($), id )
 import Data.Functor            ( fmap )
 import Data.List               ( zip )

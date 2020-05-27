@@ -17,7 +17,7 @@ import Control.Monad        ( Monad, (>>=), return )
 import Data.Eq              ( Eq )
 import Data.Function        ( ($), (&), const, id )
 import Data.Functor         ( Functor, fmap )
-import Data.Maybe           ( Maybe( Just, Nothing ) )
+import Data.Maybe           ( Maybe( Just ) )
 import Data.Monoid          ( Monoid )
 import Data.String          ( String )
 import GHC.Exts             ( fromList )
@@ -29,7 +29,6 @@ import Text.Show            ( Show )
 -- base-unicode-symbols ----------------
 
 import Data.Eq.Unicode        ( (≡) )
-import Data.Monoid.Unicode    ( (⊕) )
 import Data.Function.Unicode  ( (∘) )
 
 -- data-default ------------------------
@@ -46,13 +45,13 @@ import Control.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log           ( Log, fromList, logIO, logIO', logIOT )
+import Log           ( Log, logIO, logIOT )
 import Log.Equish    ( Equish( (≃) ) )
 import Log.LogEntry  ( logEntry )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, Severity(..), WithSeverity( WithSeverity )
+import Control.Monad.Log  ( MonadLog, Severity(..)
                           , logMessage, runLoggingT, runPureLoggingT )
 
 -- monadio-plus ------------------------
@@ -100,7 +99,7 @@ import TastyPlus2  ( withResource2' )
 
 -- text --------------------------------
 
-import Data.Text     ( Text, pack )
+import Data.Text     ( Text )
 import Data.Text.IO  ( readFile )
 
 -- time --------------------------------
@@ -201,8 +200,6 @@ newtype SimpleLogEntry = SimpleLogEntry (IOClass,Text)
 instance HasIOClass SimpleLogEntry where
   ioClass = lens (\ (SimpleLogEntry (c,_)) → c)
                  (\ (SimpleLogEntry (_,t)) c → SimpleLogEntry (c,t))
-
-type SimpleLog = DList (WithSeverity SimpleLogEntry)
 
 {- | Fold a function across a stream; intended for use as a subclause of other
      folds. -}
@@ -305,11 +302,11 @@ data LogRenderType = LRO_Plain
 writerMonadTests ∷ TestTree
 writerMonadTests =
   let helloEntry = fromList [ SimpleLogEntry(IORead,"Hello") ]
-      readFn ∷ (MonadIO μ, MonadWriter (DList SimpleLogEntry) μ) ⇒ FilePath → DoMock → μ Text
-      readFn fn mock = runLoggingT (mkIO' (const helloEntry) "mockety"
+      readFn' ∷ (MonadIO μ, MonadWriter (DList SimpleLogEntry) μ) ⇒ FilePath → DoMock → μ Text
+      readFn' fn mock = runLoggingT (mkIO' (const helloEntry) "mockety"
                                          (readFile fn) mock) tell
    in testGroup "writerMonad"
-                [ withResource2' (runWriterT $ readFn "/etc/subgid" NoMock)
+                [ withResource2' (runWriterT $ readFn' "/etc/subgid" NoMock)
                                  (readFile "/etc/subgid") $ \ txtlog exptxt →
                     testGroup "NoMock"
                               [ testCase "txt" $ do (txt,_) ← txtlog
@@ -318,7 +315,7 @@ writerMonadTests =
                               , testCase "log" $ do (_,lg) ← txtlog
                                                     helloEntry @=? lg
                               ]
-                , withResource' (runWriterT $ readFn "/etc/subgid" DoMock) $
+                , withResource' (runWriterT $ readFn' "/etc/subgid" DoMock) $
                     \ txtlog →
                     testGroup "DoMock"
                               [ testCase "txt" $ do (txt,_) ← txtlog
@@ -392,14 +389,6 @@ isExternalIO a = case a ⊣ ioClass of
 isInternalIO ∷ HasIOClass α ⇒ α -> 𝔹
 isInternalIO = not ∘ isExternalIO
 
-{- | "Log Message" the noun, rather than the verb; turn a simple message into a
-     Log Message, with IOClass & Severity. -}
-logMsg ∷ Severity → IOClass → Text → DList (WithSeverity SimpleLogEntry)
-logMsg sv clss msg = fromList [WithSeverity sv (SimpleLogEntry(clss,msg))]
-
-logInfo ∷ IOClass → Text → DList (WithSeverity SimpleLogEntry)
-logInfo = logMsg Informational
-
 {- This exists here for testing only; real file reading/writing will be in a
    different package. -}
 -- enhancements: toDoc(), set mock text
@@ -407,41 +396,28 @@ readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass
          String → DoMock → μ Text
 readFn s = mkIORead (const $ [fmt|read %s|] s) "mock text" (readFile s)
 
-logMsgTests ∷ TestTree
-logMsgTests =
-  let -- helloEnt = fromList [ WithSeverity Informational $ SimpleLogEntry(IORead,"hello") ]
-      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, SimpleLog)
-      readFn' fn mock = runPureLoggingT (mkIO' (const $ logInfo IORead "hello")
-                                               "mockety" (readFile fn) mock)
-      my_log_entry t = logEntry [("logIO"∷String,SrcLoc "main" "MockIO" "src/MockIO.hs" 193 3 193 58)] (Just t) Informational (pretty @Text "read /etc/subgid") IORead
-      my_log ∷ UTCTime → Log IOClass
-      my_log t = fromList [ my_log_entry t ]
+readFnTests ∷ TestTree
+readFnTests =
+  let src_loc     = SrcLoc "main" "MockIO" "src/MockIO.hs" 192 3 192 58
+      call_list   = [("logIO"∷String,src_loc)]
+      log_entry t = logEntry call_list (Just t) Informational
+                             (pretty @Text "read /etc/subgid") IORead
+
+      log_ ∷ UTCTime → Log IOClass
+      log_ t       = fromList [ log_entry t ]
+
+      log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
+
    in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/subgid" NoMock)
                      (readFile "/etc/subgid") $ \ txtlog exptxt →
-        testGroup "logMsg"
+        testGroup "readFn"
                   [ testCase "txt" $ do (txt,_) ← txtlog
                                         exp ← exptxt
                                         exp ≟ txt
                   , testCase "log" $ do (_,lg) ← txtlog
                                         t ← getCurrentTime
-                                        assertBool ([fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (my_log t) lg)
-                                                   (my_log t ≃ lg)
-                  ]
-
-oldLogMsgTests ∷ TestTree
-oldLogMsgTests =
-  let helloEnt = fromList [ WithSeverity Informational $ SimpleLogEntry(IORead,"hello") ]
-      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, SimpleLog)
-      readFn' fn mock = runPureLoggingT (mkIO' (const $ logInfo IORead "hello")
-                                               "mockety" (readFile fn) mock)
-   in withResource2' (readFn' "/etc/subgid" NoMock)
-                     (readFile "/etc/subgid") $ \ txtlog exptxt →
-        testGroup "logMsg"
-                  [ testCase "txt" $ do (txt,_) ← txtlog
-                                        exp ← exptxt
-                                        exp ≟ txt
-                  , testCase "log" $ do (_,lg) ← txtlog
-                                        helloEnt @=? lg
+                                        assertBool (log_string t lg)
+                                                   (log_ t ≃ lg)
                   ]
 
 ю̄ ∷ Monoid α ⇒ [α] → α
@@ -453,7 +429,7 @@ oldLogMsgTests =
 
 tests ∷ TestTree
 tests = testGroup "MockIO" [ filterDocTests, writerMonadTests, pureLoggingTests
-                           , logMsgTests
+                           , readFnTests
                            ]
 
 ----------------------------------------
