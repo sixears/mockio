@@ -375,10 +375,12 @@ class HasIOClass α where
 instance HasIOClass IOClass where
   ioClass = id
 
-{-| Predicate for IO that outside of this process; that is, exclude `IORead` &
-    `IOWrite`; leaving `IOCmdR`, `IOCmdW`, `IOExec`. -}
+{-| Predicate for IO that outside of this process (utilizes exec*); that is,
+    exclude `NoIO`, `IORead` & `IOWrite`; leaving `IOCmdR`, `IOCmdW`, `IOExec`.
+ -}
 isExternalIO ∷ HasIOClass α ⇒ α -> 𝔹
 isExternalIO a = case a ⊣ ioClass of
+                   NoIO    → False
                    IORead  → False
                    IOWrite → False
                    IOCmdR  → True
