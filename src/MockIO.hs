@@ -306,8 +306,8 @@ writerMonadTests =
       readFn' fn mock = runLoggingT (mkIO' (const helloEntry) "mockety"
                                          (readFile fn) mock) tell
    in testGroup "writerMonad"
-                [ withResource2' (runWriterT $ readFn' "/etc/subgid" NoMock)
-                                 (readFile "/etc/subgid") $ \ txtlog exptxt →
+                [ withResource2' (runWriterT $ readFn' "/etc/group" NoMock)
+                                 (readFile "/etc/group") $ \ txtlog exptxt →
                     testGroup "NoMock"
                               [ testCase "txt" $ do (txt,_) ← txtlog
                                                     exp ← exptxt
@@ -315,33 +315,8 @@ writerMonadTests =
                               , testCase "log" $ do (_,lg) ← txtlog
                                                     helloEntry @=? lg
                               ]
-                , withResource' (runWriterT $ readFn' "/etc/subgid" DoMock) $
+                , withResource' (runWriterT $ readFn' "/etc/group" DoMock) $
                     \ txtlog →
-                    testGroup "DoMock"
-                              [ testCase "txt" $ do (txt,_) ← txtlog
-                                                    "mockety" ≟ txt
-                              , testCase "log" $ do (_,lg) ← txtlog
-                                                    helloEntry @=? lg
-                              ]
-                ]
-
-pureLoggingTests ∷ TestTree
-pureLoggingTests =
-  let helloEntry = fromList [ SimpleLogEntry(IORead,"Hello") ]
-      readFn' ∷ (MonadIO μ) ⇒ FilePath → DoMock → μ (Text, DList SimpleLogEntry)
-      readFn' fn mock = runPureLoggingT (mkIO' (const helloEntry) "mockety"
-                                        (readFile fn) mock)
-   in testGroup "pureLogging"
-                [ withResource2' (readFn' "/etc/subgid" NoMock)
-                                 (readFile "/etc/subgid") $ \ txtlog exptxt →
-                    testGroup "NoMock"
-                              [ testCase "txt" $ do (txt,_) ← txtlog
-                                                    exp ← exptxt
-                                                    exp ≟ txt
-                              , testCase "log" $ do (_,lg) ← txtlog
-                                                    helloEntry @=? lg
-                              ]
-                , withResource' (readFn' "/etc/subgid" DoMock) $ \ txtlog →
                     testGroup "DoMock"
                               [ testCase "txt" $ do (txt,_) ← txtlog
                                                     "mockety" ≟ txt
@@ -354,13 +329,15 @@ pureLoggingTests =
 -- XXX simple functions for severity
 
 data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
+                       --   (e.g., read a file, or the system clock).
              | IOWrite -- ^ An IO action that may alter state
+                       --   (e.g., write a file, or to the network).
              | IOCmdR  -- ^ An external cmd (results in an execve or fork call)
-                       --   that perceives but does not alter state
+                       --   that perceives but does not alter state.
              | IOCmdW  -- ^ An external cmd (results in an execve or fork call)
-                       --   that may alter state
-             | IOExec  -- ^ An exec (replaces this executable)
-             | NoIO    -- ^ no IO
+                       --   that may alter state.
+             | IOExec  -- ^ An exec (replaces this executable).
+             | NoIO    -- ^ No IO.
   deriving (Eq,Show)
 
 instance Default IOClass where
@@ -403,18 +380,42 @@ readFnTests =
   let src_loc     = SrcLoc "main" "MockIO" "src/MockIO.hs" 192 3 192 58
       call_list   = [("logIO"∷String,src_loc)]
       log_entry t = logEntry call_list (Just t) Informational
-                             (pretty @Text "read /etc/subgid") IORead
+                             (pretty @Text "read /etc/group") IORead
 
       log_ ∷ UTCTime → Log IOClass
       log_ t       = fromList [ log_entry t ]
 
       log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
 
-   in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/subgid" NoMock)
-                     (readFile "/etc/subgid") $ \ txtlog exptxt →
+   in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/group" NoMock)
+                     (readFile "/etc/group") $ \ txtlog exptxt →
         testGroup "readFn"
                   [ testCase "txt" $ do (txt,_) ← txtlog
                                         exp ← exptxt
+                                        exp ≟ txt
+                  , testCase "log" $ do (_,lg) ← txtlog
+                                        t ← getCurrentTime
+                                        assertBool (log_string t lg)
+                                                   (log_ t ≃ lg)
+                  ]
+
+readFnMockTests ∷ TestTree
+readFnMockTests =
+  let src_loc     = SrcLoc "main" "MockIO" "src/MockIO.hs" 192 3 192 58
+      call_list   = [("logIO"∷String,src_loc)]
+      log_entry t = logEntry call_list (Just t) Informational
+                             (pretty @Text "read /etc/group") IORead
+
+      log_ ∷ UTCTime → Log IOClass
+      log_ t       = fromList [ log_entry t ]
+
+      log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
+
+   in withResource' (runPureLoggingT $ readFn @IOClass "/etc/group" DoMock) $
+                    \ txtlog  →
+        testGroup "readFn-Mock"
+                  [ testCase "txt" $ do (txt,_) ← txtlog
+                                        exp ← return "mock text"
                                         exp ≟ txt
                   , testCase "log" $ do (_,lg) ← txtlog
                                         t ← getCurrentTime
@@ -430,8 +431,8 @@ readFnTests =
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
-tests = testGroup "MockIO" [ filterDocTests, writerMonadTests, pureLoggingTests
-                           , readFnTests
+tests = testGroup "MockIO" [ filterDocTests, writerMonadTests, readFnTests
+                           , readFnMockTests
                            ]
 
 ----------------------------------------
