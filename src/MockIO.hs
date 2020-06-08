@@ -252,59 +252,6 @@ logAll = do
   log Critical      IOCmdR ("iocmdr" ∷ Text)
   log Debug         IOCmdR ("iowrite" ∷ Text)
 
-filterDocTests ∷ TestTree
-filterDocTests =
-  let -- note that sdoc has SText ("begin"), SLine (line), and SChar (hsep)
-      sdoc ∷ SimpleDocStream IOClass
-      sdoc = layoutPretty defaultLayoutOptions
-                          (ю̄ [ "begin"
-                             , line
-                             , hsep [ annotate IORead "ioread"
-                                    , annotate IOCmdR "iocmdr"
-                                    , annotate IOWrite "iowrite"
-                                    ]
-                             , line
-                             , "end"
-                             ])
-      sdoc_none ∷ SimpleDocStream IOClass
-      sdoc_none = layoutPretty defaultLayoutOptions
-                               (ю̄ [ "begin", line, hsep [ "","", "" ], line
-                                  , "end" ])
-
-      sdoc_internal ∷ SimpleDocStream IOClass
-      sdoc_internal = layoutPretty defaultLayoutOptions
-                                   (ю̄ [ "begin"
-                                      , line
-                                      , hsep [ annotate IORead "ioread", ""
-                                             , annotate IOWrite "iowrite"
-                                             ]
-                                      , line
-                                      , "end"
-                                      ])
-
-   in testGroup "filterDoc"
-                [ testCase "all may pass" $
-                    sdoc @=? filterDocStream (const True) sdoc
-                , testCase "none shall pass" $
-                    sdoc_none @=? filterDocStream (const False) sdoc
-                , testCase "isInternalIO" $
-                    sdoc_internal @=? filterDocStream isInternalIO sdoc
-                ]
-
-{- | Note the awkward capitalization, to avoid clashing with
-     `GHC.Stack.HasCallStack` -}
--- class HasCallstack α where
---   callStack' ∷ Lens' α CallStack
-
--- instance HasCallstack CallStack where
---   callStack' = id
-
--- class HasUTCTimeY α where
---   utcTimeY ∷ Lens' α (Maybe UTCTime)
-
--- instance HasUTCTimeY (Maybe UTCTime) where
---   utcTimeY = id
-
 data LogRenderType = LRO_Plain
                    | LRO_Severity
                    | LRO_TimeStamp
@@ -451,9 +398,7 @@ readFnMockTests =
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
-tests = testGroup "MockIO" [ filterDocTests, writerMonadTests, readFnTests
-                           , readFnMockTests
-                           ]
+tests = testGroup "MockIO" [ writerMonadTests, readFnTests, readFnMockTests ]
 
 ----------------------------------------
 
