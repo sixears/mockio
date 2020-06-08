@@ -141,13 +141,17 @@ renderWithStackHead f m =
 
 ----------------------------------------
 
-renderCallStack ∷ [(String,SrcLoc)] → Doc ann
-renderCallStack [] = "empty callstack"
-renderCallStack (root:rest) =
-  prettyCallSite root ⊕ line ⊕ indent 2 (vsep (prettyCallSite ⊳ rest))
-  where prettyCallSite (f,loc) =
+prettyCallSite ∷ (String,SrcLoc) → Doc ρ
+prettyCallSite (f,loc) =
           pretty (LT.pack f) ⊕ ", called at " ⊕
           pretty (LT.pack (GHC.Stack.prettySrcLoc loc))
+
+renderCallStack ∷ [(String,SrcLoc)] → Doc ann
+renderCallStack [] = "empty callstack"
+renderCallStack (root:[]) =
+  prettyCallSite root
+renderCallStack (root:rest) =
+  prettyCallSite root ⊕ line ⊕ indent 2 (vsep (prettyCallSite ⊳ rest))
 
 ----------
 

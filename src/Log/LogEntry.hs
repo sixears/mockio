@@ -2,17 +2,19 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module Log.LogEntry
-  ( LogEntry, logdoc, logEntry
-  , _le0, _le1, _le2, _le3 )
+  ( LogEntry, attrs, logdoc, logEntry
+  , _le0, _le1, _le2, _le3, _le4n, _le5n )
 where
 
 -- base --------------------------------
 
 import Data.Bool      ( Bool( False, True ) )
 import Data.Eq        ( Eq( (==) ) )
-import Data.Function  ( ($) )
+import Data.Function  ( ($), (&) )
+import Data.Functor   ( Functor( fmap ) )
 import Data.Maybe     ( Maybe( Just, Nothing ) )
 import Data.Ord       ( (<) )
+import Data.String    ( String )
 import GHC.Num        ( abs )
 import GHC.Stack      ( CallStack, SrcLoc( SrcLoc ), fromCallSiteList )
 import Text.Show      ( Show( show ) )
@@ -29,7 +31,7 @@ import Data.Textual  ( Printable( print ) )
 
 -- lens --------------------------------
 
-import Control.Lens.Lens  ( Lens', lens )
+import Control.Lens.Lens  ( Lens, Lens', lens )
 
 -- logging-effect ----------------------
 
@@ -38,7 +40,8 @@ import Control.Monad.Log  ( Severity( Critical, Emergency, Informational
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Lens     ( (⊣), (⊧) )
+import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
@@ -93,12 +96,14 @@ instance Eq ω ⇒ Eq (LogEntry ω) where
                   ∧ simpleDoc le      ≡ simpleDoc le'
                   ∧ le ⊣ attrs        ≡ le' ⊣ attrs
 
+instance Functor LogEntry where
+  fmap f le = le & attrs ⊧ f
+
 instance Equish ω ⇒ Equish (LogEntry ω) where
   {- | Approximately equal; that is, equal but with timestamps differing by no
-       more than 10s (absolute). -}
+       more than 10s (absolute); and no check on the callsitelist. -}
   le ≃ le' = let simpleDoc l = layoutPretty defaultLayoutOptions (l ⊣ logdoc)
-              in   le ⊣ callsitelist ≡ le' ⊣ callsitelist
-                 ∧ (case ((le ⊣ utcTimeY), (le' ⊣ utcTimeY)) of
+              in   (case ((le ⊣ utcTimeY), (le' ⊣ utcTimeY)) of
                       (Nothing, Nothing) → True
                       (Just t,  Just t') → abs (diffUTCTime t t') < 10
                       (_, _)             → False
@@ -108,7 +113,7 @@ instance Equish ω ⇒ Equish (LogEntry ω) where
                  ∧ simpleDoc le      ≡ simpleDoc le'
                  ∧ le ⊣ attrs        ≃ le' ⊣ attrs
 
-attrs ∷ Lens' (LogEntry ω) ω
+attrs ∷ Lens (LogEntry ω) (LogEntry ω') ω ω'
 attrs = lens _attrs (\ le as → le { _attrs = as })
 
 logEntry ∷ HasCallstack α ⇒
@@ -117,6 +122,10 @@ logEntry cs = LogEntry (cs ⊣ callstack)
 
 -- logEntry' ∷ [(String,SrcLoc)] → Maybe UTCTime → Severity → Doc() → LogEntry
 -- logEntry' = logEntry
+
+{- | Construct a log entry, with no callstack -}
+logEntryNoCS ∷ Maybe UTCTime → Severity → Doc() → ω → LogEntry ω
+logEntryNoCS = logEntry ([] ∷ [(String,SrcLoc)])
 
 logdoc ∷ Lens' (LogEntry ω)  (Doc ())
 logdoc = lens _logdoc (\ le d → le { _logdoc = d })
@@ -139,6 +148,18 @@ instance Printable ω ⇒ Printable (LogEntry ω) where
                                           (stackHeadTxt le)
                                           (renderDoc $ le ⊣ logdoc)
                                           (le ⊣ attrs)
+
+{-
+instance Printable (LogEntry ℕ) where
+  print le =
+    let renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
+     in P.text $ [fmt|[%Z|%-4t] %t %t <%w>|]
+                                          (le ⊣ utcTimeY)
+                                          (take 4 ∘ pack ∘ show $ le ⊣ severity)
+                                          (stackHeadTxt le)
+                                          (renderDoc $ le ⊣ logdoc)
+                                          (le ⊣ attrs)
+-}
 
 -- rendering -----------------------------------------------
 
@@ -182,5 +203,11 @@ _le2 =
 _le3 ∷ LogEntry ()
 _le3 = 
   logEntry _cs1 Nothing Emergency (pretty ("this is the last message" ∷Text)) ()
+
+_le4n ∷ LogEntry ℕ
+_le4n = logEntryNoCS Nothing Warning  (pretty ("start" ∷ Text)) 1
+
+_le5n ∷ LogEntry ℕ
+_le5n = logEntryNoCS Nothing Critical (pretty ("end" ∷ Text)) 2
 
 -- that's all, folks! ----------------------------------------------------------

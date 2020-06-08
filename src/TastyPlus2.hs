@@ -3,7 +3,8 @@
 {-# LANGUAGE ViewPatterns      #-}
 
 module TastyPlus2
-  ( assertListEq, assertListEqIO, withResource2, withResource2' )
+  ( assertListEq, assertListCmp, assertListEqIO, assertListCmpIO
+  , withResource2, withResource2' )
 where
 
 import TastyPlus  ( withResource' )
@@ -37,6 +38,7 @@ import Fluffy.Foldable  ( length )
 
 -- more-unicode ------------------------
 
+import Data.MoreUnicode.Bool     ( 𝔹 )
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Monad    ( (≫) )
 
@@ -50,7 +52,7 @@ import Test.Tasty  ( TestTree, testGroup, withResource )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( Assertion, assertBool, testCase )
+import Test.Tasty.HUnit  ( Assertion, assertBool, assertFailure, testCase )
 
 -- text --------------------------------
 
@@ -68,37 +70,55 @@ withResource2' ∷ IO α → IO β → (IO α → IO β → TestTree)
 withResource2' gain gain' ts =
   withResource' gain (\ x → withResource' gain' (\ x' → ts x x'))
 
-assertEq' ∷ (Eq t, HasCallStack) ⇒ (t → Text) → t → t → Assertion
-assertEq' toT expected got =
-  let toS = toString ∘ toT
+assertCmp' ∷ HasCallStack ⇒
+             (α → Text) → (β → Text) → (α → β → 𝔹) → α → Maybe β → Assertion
+assertCmp' toTa _ _ expected Nothing =
+       assertFailure ("expected: " ⊕ toString (toTa expected)
+                                   ⊕ "\nbut got Nothing")
+assertCmp' toTa toTb cmp expected (Just got) =
+  let toSa = toString ∘ toTa
+      toSb = toString ∘ toTb
    in -- equalize prefix lengths to make it easier to diff strings, etc.
-       assertBool ("expected: " ⊕ toS expected ⊕ "\nbut got : " ⊕ toS got)
-                  (got ≡ expected)
+       assertBool ("expected: " ⊕ toSa expected ⊕ "\nbut got : " ⊕ toSb got)
+                  (cmp expected got)
 
-{- | Compare two lists for equality, with itemized testing.  We take the inputs
-     as IO to allow for, well, IO.
+{- | Compare two lists for compatibility, with customized, itemized testing.
+     We take the inputs as IO to allow for, well, IO.
  -}
-assertListEqIO' ∷ (Foldable ψ, Foldable φ, Eq α, Printable σ, HasCallStack) ⇒
-                  (α → Text) → σ → ψ α → IO (φ α) → TestTree
-assertListEqIO' toT name (toList → expect) (fmap toList → got) =
+assertListCmpIO ∷ (Foldable ψ, Foldable φ, Printable σ, HasCallStack) ⇒
+                    (α → Text) → (β → Text) → (α → β → 𝔹) → σ → ψ α → IO (φ β)
+                  → TestTree
+assertListCmpIO toTa toTb cmp name (toList → expect) (fmap toList → got) =
   let lCheck e g =
         assertBool ("length " ⊕ show g ⊕ " did not match expected " ⊕ show e)
                    (e ≡ g)
       lengthCheck e g = lCheck (length e) (length g)
       assertItem (i,e) =
-        testCase (show i) (got ≫ \ g → assertEq' toT' (Just e) (atMay g i))
-      toT' Nothing  = "Nothing"
-      toT' (Just a) = "Just " ⊕ toT a
+        testCase (show i)
+                 (got ≫ \ g → assertCmp' toTa toTb cmp e (atMay g i))
 
    in testGroup (toString name) $
           testCase "count" (got ≫ lengthCheck expect)
         : (assertItem ⊳ zip [0..] expect)
 
+{- | Compare two lists for equality, with itemized testing and IO. -}
+assertListEqIO' ∷ (Foldable ψ, Foldable φ, Eq α, Printable σ, HasCallStack) ⇒
+                  (α → Text) → σ → ψ α → IO (φ α) → TestTree
+assertListEqIO' toT = assertListCmpIO toT toT (≡)
+
 assertListEqIO ∷ (Foldable ψ, Foldable φ, Eq α, Printable α, HasCallStack) ⇒
                 Text → ψ α → IO (φ α) → TestTree
 assertListEqIO = assertListEqIO' toText
 
--- | compare two lists for equality, with itemized testing
+
+{- | Compare two lists for compatibility, with itemized testing. -}
+assertListCmp ∷ (Foldable ψ, Foldable φ, Printable σ, HasCallStack) ⇒
+                  (α → Text) → (β → Text) → (α → β → 𝔹) → σ → ψ α → φ β
+                 → TestTree
+assertListCmp toTa toTb cmp name exp got =
+  assertListCmpIO toTa toTb cmp name exp (return got)
+
+{- | Compare two lists for equality, with itemized testing. -}
 assertListEq ∷ (Eq α, Printable α, Foldable ψ, Foldable φ, HasCallStack) ⇒
                Text → ψ α → φ α → TestTree
 assertListEq name exp got = assertListEqIO name exp (return got)

@@ -45,7 +45,8 @@ import Control.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log           ( Log, logIO, logIOT )
+import Log           ( CSOpt( FullCallStack ), Log, ToDoc_, WithLog
+                     , log, logIO, logIOT, logToStderr )
 import Log.Equish    ( Equish( (≃) ) )
 import Log.LogEntry  ( logEntry )
 
@@ -100,7 +101,7 @@ import TastyPlus2  ( withResource2' )
 -- text --------------------------------
 
 import Data.Text     ( Text )
-import Data.Text.IO  ( readFile )
+import Data.Text.IO  ( putStrLn, readFile )
 
 -- time --------------------------------
 
@@ -108,7 +109,7 @@ import Data.Time.Clock  ( UTCTime, getCurrentTime )
 
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt )
+import Text.Fmt  ( fmt, fmtT )
 
 ------------------------------------------------------------
 --                     local imports                      --
@@ -186,8 +187,16 @@ mkIO' log mock_value io mock = do
     NoMock → liftIO io
     DoMock → return mock_value
 
-mkIORead ∷ (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
-           (DoMock → Text) → α → IO α → DoMock → μ α
+mkIO ∷ (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+       (DoMock → τ) → IOClass → α → IO α → DoMock → μ α
+mkIO log ioc mock_value io mock = do
+  logIO Informational (def & ioClass ⊢ ioc) (log mock)
+  case mock of
+    NoMock → liftIO io
+    DoMock → return mock_value
+
+mkIORead ∷ (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+           (DoMock → τ) → α → IO α → DoMock → μ α
 mkIORead log mock_value io mock = do
   logIO Informational (def & ioClass ⊢ IORead) (log mock)
   case mock of
@@ -236,6 +245,12 @@ filterDocStream p = dropEmptyAnnotations ∘ go []
     go (_:stack)     (SAnnPop rest)      = SAnnPop (go stack rest)
 
     go stack ss = foldDocStream (go stack) ss
+
+logAll ∷ WithLog IOClass η ⇒ η ()
+logAll = do
+  log Informational IORead ("ioread" ∷ Text)
+  log Critical      IOCmdR ("iocmdr" ∷ Text)
+  log Debug         IOCmdR ("iowrite" ∷ Text)
 
 filterDocTests ∷ TestTree
 filterDocTests =
@@ -373,7 +388,11 @@ isInternalIO = not ∘ isExternalIO
 -- enhancements: toDoc(), set mock text
 readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
          String → DoMock → μ Text
-readFn s = mkIORead (const $ [fmt|read %s|] s) "mock text" (readFile s)
+readFn s = mkIORead (const $ [fmtT|read %s|] s) "mock text" (readFile s)
+
+readFn' ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
+          IOClass → String → DoMock → μ Text
+readFn' ioc s = mkIO (const $ [fmtT|read %s|] s) ioc "mock text" (readFile s)
 
 readFnTests ∷ TestTree
 readFnTests =
@@ -385,6 +404,7 @@ readFnTests =
       log_ ∷ UTCTime → Log IOClass
       log_ t       = fromList [ log_entry t ]
 
+      log_string ∷ UTCTime → Log IOClass → String
       log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
 
    in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/group" NoMock)
@@ -447,5 +467,12 @@ _tests = runTestsP tests
 
 _testr ∷ String → ℕ → IO ExitCode
 _testr = runTestsReplay tests
+
+_testm ∷ IO ()
+_testm = do
+  gr ← logToStderr FullCallStack $ readFn @IOClass "/etc/group" NoMock
+  putStrLn "---- /etc/group"
+  putStrLn gr
+  putStrLn "---------------"
 
 -- that's all, folks! ----------------------------------------------------------
