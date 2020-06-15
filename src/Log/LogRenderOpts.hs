@@ -76,6 +76,10 @@ import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
 import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle, renderIO )
 import Data.Text.Prettyprint.Doc.Render.Text      ( renderStrict )
 
+-- prettyprinter-ansi-terminal ---------
+
+import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle, renderIO )
+
 -- tasty -------------------------------
 
 import Test.Tasty  ( TestTree, testGroup )

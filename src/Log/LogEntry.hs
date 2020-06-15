@@ -50,6 +50,10 @@ import Data.Text.Prettyprint.Doc  ( Doc, (<+>), align, defaultLayoutOptions
 import Data.Text.Prettyprint.Doc.Render.Text
                                   ( renderStrict )
 
+-- tasty-plus --------------------------
+
+import TastyPlus.Equish  ( Equish( (≃) ) )
+
 -- text --------------------------------
 
 import Data.Text  ( Text, pack, take )
@@ -71,7 +75,6 @@ import Data.Time.Clock     ( UTCTime( UTCTime ), diffUTCTime,secondsToDiffTime )
 --                     local imports                      ---
 -----------------------------------------------------------
 
-import Log.Equish        ( Equish( (≃) ) )
 import Log.HasCallstack  ( HasCallstack( callsitelist, callstack )
                          , stackHeadTxt )
 import Log.HasSeverity   ( HasSeverity( severity ) )

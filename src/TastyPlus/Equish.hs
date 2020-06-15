@@ -1,7 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
-module Log.Equish
+module TastyPlus.Equish
   ( Equish( (≃) ) )
 where
 

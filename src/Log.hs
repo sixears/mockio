@@ -19,6 +19,7 @@ module Log
   , emergency', alert', critical', err', warn', notice', info', debug'
   , emergencyT, alertT, criticalT, errT, warnT, noticeT, infoT, debugT
 
+  , filterLog, filterLog', filterSeverity
   , fromList
   , log, logMsg, log', logMsg', logT, logMsgT, logT', logMsgT'
   , logIO, logIO', logIOT
@@ -35,13 +36,13 @@ import Prelude ( toInteger )
 import qualified  Data.Foldable  as  Foldable
 
 import Control.Concurrent      ( threadDelay )
-import Control.Monad           ( Monad, return )
+import Control.Monad           ( Monad, forM_, return )
 import Control.Monad.Identity  ( Identity, runIdentity )
 import Data.Bool               ( Bool( False, True ) )
 import Data.Eq                 ( Eq )
 import Data.Foldable           ( Foldable, all, foldl', foldl1
                                , foldMap, foldr, foldr1 )
-import Data.Function           ( ($), id )
+import Data.Function           ( ($), const, flip, id )
 import Data.Functor            ( fmap )
 import Data.List               ( zip )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
@@ -117,7 +118,6 @@ import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
-import qualified  Data.Text.Prettyprint.Doc.Render.Terminal  as  RenderTerminal
 import qualified  Data.Text.Prettyprint.Doc.Render.Text      as  RenderText
 
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
@@ -125,6 +125,10 @@ import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
                                   , SimpleDocStream(..)
                                   , layoutPretty, line', pretty, vsep
                                   )
+
+-- prettyprinter-ansi-terminal ---------
+
+import qualified  Data.Text.Prettyprint.Doc.Render.Terminal  as  RenderTerminal
 
 -- single ------------------------------
 
@@ -136,8 +140,9 @@ import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-plus --------------------------
 
-import TastyPlus   ( runTestsP, runTestsReplay, runTestTree )
-import TastyPlus2  ( assertListEq, assertListCmp, assertListEqIO )
+import TastyPlus         ( runTestsP, runTestsReplay, runTestTree )
+import TastyPlus2        ( assertListEq, assertListCmp, assertListEqIO )
+import TastyPlus.Equish  ( Equish( (≃) ) )
 
 -- terminal-size -----------------------
 
@@ -145,7 +150,8 @@ import qualified  System.Console.Terminal.Size  as  TerminalSize
 
 -- text --------------------------------
 
-import Data.Text  ( Text, intercalate, unlines )
+import Data.Text     ( Text, intercalate, unlines )
+import Data.Text.IO  ( hPutStrLn )
 
 -- text-printer ------------------------
 
@@ -159,7 +165,7 @@ import Data.Time.Clock     ( getCurrentTime )
 --                     local imports                       -
 ------------------------------------------------------------
 
-import Log.Equish         ( Equish( (≃) ) )
+import Log.HasSeverity    ( severity )
 import Log.LogEntry       ( LogEntry, LogEntry
                           , attrs, logEntry
                           , _le0, _le1, _le2, _le3, _le4n, _le5n
@@ -474,14 +480,174 @@ withFDHandler ∷ (MonadIO μ, MonadMask μ) ⇒
               → PageWidth
               → BatchingOptions
               → Handle
-              → (Handler μ (Doc ρ) -> μ α)
+              → (Handler μ (Doc ρ) → μ α) -- A.K.A, (Doc ρ → μ ()) → μ α
               → μ α
 withFDHandler r pw bopts fd handler =
   let layout ∷ Foldable ψ ⇒ ψ (Doc π) → SimpleDocStream π
       layout ms = layoutPretty (LayoutOptions pw)
                                (vsep (Foldable.toList ms) ⊕ line')
+      -- flush ∷ Foldable ψ ⇒ ψ (Doc ρ) → IO()
       flush messages = r fd (layout messages) ⪼ hFlush fd
    in withBatchedHandler bopts flush handler
+      
+{-
+λ> (\ (l :: Log w) -> forM_ (toList l) (\ x -> RenderTerminal.renderIO stderr (layoutPretty defaultLayoutOptions (lroRendererAnsi def x)))) _log0
+-}
+
+{-
+λ> let x = undefined :: MonadLog (Log w) m => m a
+*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
+λ> :t runLoggingT x
+runLoggingT x
+  :: forall {m :: * -> *} {w} {a}.
+     Monad m =>
+     Handler m (Log w) -> m a
+*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
+λ> handler is a way of getting from Log w to m ()
+
+<interactive>:197:18: error: parse error on input ‘of’
+*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
+λ> :t runLoggingT x (\l -> xx l (undefined::PageWidth) stderr def)
+runLoggingT x (\l -> xx l (undefined::PageWidth) stderr def)
+  :: forall {m :: * -> *} {a}. MonadIO m => m a
+-}
+
+xx ∷ MonadIO μ ⇒ PageWidth → Handle → LogRenderOpts → Log ω → μ ()
+xx pw fd lro l = liftIO $ forM_ (toList l)
+                                (\ x → RenderTerminal.renderIO fd (layoutPretty (LayoutOptions pw) (lroRendererAnsi lro x)))
+
+xx' ∷ MonadIO μ ⇒
+      PageWidth
+    → Handle
+    → LogRenderOpts
+    → (Handle → SimpleDocStream RenderTerminal.AnsiStyle → IO ())
+    → Log ω
+    → μ ()
+xx' pw fd lro renderer l =
+  liftIO $ forM_ (toList l)
+                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
+                                                  (lroRendererAnsi lro x)))
+
+xx'' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → LogRenderOpts
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → (Handler μ (Doc ρ) → μ α)
+     → Log ω
+     → μ α
+xx'' pw fd lro renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
+               renderer2 f l
+  = do
+  liftIO $ forM_ (toList l)
+                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
+                                                  (renderer2 x)))
+  f (const $ return ())
+
+xx''' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → (Handler μ (Doc ρ) → μ α)
+     → Log ω
+     → μ α
+xx''' pw fd renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
+           renderer2 f l
+  = do
+  liftIO $ forM_ (toList l)
+                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
+                                                  (renderer2 x)))
+  f (const $ return ())
+
+xx'''' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → Log ω
+     → μ ()
+xx'''' pw fd renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
+           renderer2 l
+  = do
+  liftIO $ forM_ (toList l)
+                 (\ x → do renderer fd (layoutPretty (LayoutOptions pw)
+                                                     (renderer2 x))
+                           hPutStrLn fd "")
+--  f (const $ return ())
+
+yy ∷ MonadIO μ ⇒ PageWidth → Handle → LogRenderOpts → LoggingT (Log ω) μ α → μ α
+yy pw fd lro = (flip runLoggingT) (xx pw fd lro)
+
+yy' ∷ MonadIO μ ⇒
+      PageWidth
+    → Handle
+    → LogRenderOpts
+    → (Handle → SimpleDocStream RenderTerminal.AnsiStyle → IO ())
+    → LoggingT (Log ω) μ α
+    → μ α
+yy' pw fd lro renderer = (flip runLoggingT) (xx' pw fd lro renderer)
+
+yy'' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → LogRenderOpts
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → (Handler μ (Doc ρ) → μ ()) -- f -- that should be an α
+     → LoggingT (Log ω) μ α
+     → μ α
+yy'' pw fd lro renderer renderer2 f =
+  (flip runLoggingT) (xx'' pw fd lro renderer renderer2 f)
+
+yy''' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → (Handler μ (Doc ρ) → μ ()) -- f -- that should be an α
+     → LoggingT (Log ω) μ α
+     → μ α
+yy''' pw fd renderer renderer2 f =
+  (flip runLoggingT) (xx''' pw fd renderer renderer2 f)
+
+yy'''' ∷ MonadIO μ ⇒
+       PageWidth
+     → Handle
+     → (Handle → SimpleDocStream ρ → IO ())
+     → (LogEntry ω → Doc ρ)
+     → LoggingT (Log ω) μ α
+     → μ α
+yy'''' pw fd renderer renderer2 =
+  (flip runLoggingT) (xx'''' pw fd renderer renderer2)
+
+-- ff ∷ Monad μ ⇒ (β → μ γ) → LoggingT β μ α → μ α
+ff ∷ Monad μ ⇒ Handler μ β → LoggingT β μ α → μ α
+ff f l = runLoggingT l (const () ⩺ f)
+
+zz ∷ Monad η ⇒ (LogEntry ω → Doc ρ) → LoggingT (Log ω) η α → (Doc ρ → η()) → η α
+zz renderEntry io =
+  let vsep' [] = Nothing
+      vsep' xs = Just $ vsep xs
+      -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
+      renderDoc   = vsep' ∘ fmap renderEntry ∘ otoList
+      -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
+   in \ h →
+        runLoggingT io ((\ case Just d → h d; Nothing → return ()) ∘ renderDoc)
+
+zz' ∷ Monad η ⇒ LoggingT (Maybe (Doc ρ)) η α → (Doc ρ → η()) → η α
+zz' io =
+  let vsep' [] = Nothing
+      vsep' xs = Just $ vsep xs
+      -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
+      -- renderDoc   = vsep' ∘ fmap renderEntry ∘ otoList
+      -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
+   in \ h →
+        runLoggingT io ((\ case Just d → h d; Nothing → return ()))
+
+-- zz'' ∷ Monad η ⇒ (Doc ρ → η()) → η α
+-- zz'' = \ h → (flip runLoggingT) ((\ case Just d → h d; Nothing → return ()))
 
 ----------------------------------------
 
@@ -499,7 +665,12 @@ fileBatchingOptions = BatchingOptions { flushMaxDelay     = 1_000_000
     be unlikely, with a length of 100 & 0.1s flush).
  -}
 ttyBatchingOptions ∷ BatchingOptions
-ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 100_000
+-- The max delay is a matter of experimentation; too high, and messages appear
+-- long after their effects on stdout are apparent (not *wrong*, but a bit
+-- misleading/inconvenient); too low, and the message lines get broken up
+-- and intermingled with stdout (again, not *wrong*, but a terrible user
+-- experience).
+ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 2_000
                                      , blockWhenFull     = False
                                      , flushMaxQueueSize = 100
                                      }
@@ -531,7 +702,8 @@ logToHandle renderIO renderEntry bopts width fh io =
       -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
       handler h   =
         runLoggingT io ((\ case Just d → h d; Nothing → return ()) ∘ renderDoc)
-   in withFDHandler renderIO width bopts fh handler
+--   in withFDHandler renderIO width bopts fh handler
+   in yy'''' width fh renderIO renderEntry io
 
 --------------------
 
@@ -729,10 +901,21 @@ runPureLoggingT' = snd ⩺ runPureLoggingT
 mapLog ∷ MonadLog ω' η ⇒ (ω → ω') → LoggingT ω η σ → η σ
 mapLog f m = runLoggingT m (logMessage ∘ f)
 
+{- | Filter a log with some predicate; return a `Log` with only entries that
+     match the given predicate. -}
+filterLog' ∷ MonadLog (Log ω) η ⇒ (LogEntry ω → 𝔹) → LoggingT (Log ω) η σ → η σ
+filterLog' p = mapLog $ ofilt' p
+
 {- | Filter a log with some predicate; return a `Log` with only entries whose
      payload matches the given predicate. -}
 filterLog ∷ MonadLog (Log ω) η ⇒ (ω → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterLog p = mapLog $ ofilt' (p ∘ view attrs)
+filterLog p = filterLog' (p ∘ view attrs)
+
+{- | Filter a log with some predicate; return a `Log` with only entries whose
+     payload matches the given predicate. -}
+filterSeverity ∷ MonadLog (Log ω) η ⇒
+                 (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
+filterSeverity p = filterLog' (p ∘ view severity)
 
 filterTests ∷ TestTree
 filterTests =
@@ -776,6 +959,7 @@ _testm = do
 
 _testm' ∷ IO ()
 _testm' = do
+  logToTTY    FullCallStack stderr (filterLog (<3) _log2)
   logToTTY    FullCallStack stderr (filterLog (<3) _log1io)
 
 -- that's all, folks! ----------------------------------------------------------
