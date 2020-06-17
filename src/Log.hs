@@ -38,11 +38,11 @@ import qualified  Data.Foldable  as  Foldable
 import Control.Concurrent      ( threadDelay )
 import Control.Monad           ( Monad, forM_, return )
 import Control.Monad.Identity  ( Identity, runIdentity )
-import Data.Bool               ( Bool( False, True ) )
+import Data.Bool               ( Bool( True ) )
 import Data.Eq                 ( Eq )
 import Data.Foldable           ( Foldable, all, foldl', foldl1
                                , foldMap, foldr, foldr1 )
-import Data.Function           ( ($), const, flip, id )
+import Data.Function           ( ($), flip, id )
 import Data.Functor            ( fmap )
 import Data.List               ( zip )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
@@ -472,8 +472,8 @@ logRender' = fmap snd ⩺ logRender
 
 ----------------------------------------
 
-{- | How to write to an FD with given options, using `withBatchedHandler`.
-     Each `Doc` is vertically separated.
+{- | Write to an FD with given options, using `withBatchedHandler`.
+     Each log entry is vertically separated.
  -}
 withFDHandler ∷ (MonadIO μ, MonadMask μ) ⇒
                 (Handle → SimpleDocStream ρ → IO ())
@@ -489,165 +489,26 @@ withFDHandler r pw bopts fd handler =
       -- flush ∷ Foldable ψ ⇒ ψ (Doc ρ) → IO()
       flush messages = r fd (layout messages) ⪼ hFlush fd
    in withBatchedHandler bopts flush handler
-      
-{-
-λ> (\ (l :: Log w) -> forM_ (toList l) (\ x -> RenderTerminal.renderIO stderr (layoutPretty defaultLayoutOptions (lroRendererAnsi def x)))) _log0
--}
 
-{-
-λ> let x = undefined :: MonadLog (Log w) m => m a
-*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
-λ> :t runLoggingT x
-runLoggingT x
-  :: forall {m :: * -> *} {w} {a}.
-     Monad m =>
-     Handler m (Log w) -> m a
-*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
-λ> handler is a way of getting from Log w to m ()
+{- | Write to an FD with given options, immediately (in thread), no batching.
+     Each log entry has a newline appended.
+ -}
+withSimpleHandler ∷ MonadIO μ ⇒
+                    PageWidth
+                  → Handle
+                  → (Handle → SimpleDocStream ρ → IO ())
+                  → (LogEntry ω → Doc ρ)
+                  → LoggingT (Log ω) μ α
+                  → μ α
+withSimpleHandler pw fd hPutSDS entryToDoc =
+  let hPutNewline h = hPutStrLn h ""
+      layout = layoutPretty (LayoutOptions pw)
+      renderEntry e = do let sds = layout (entryToDoc e)
+                         hPutSDS fd sds
+                         hPutNewline fd
+      renderEach l = do liftIO $ forM_ (toList l) renderEntry
 
-<interactive>:197:18: error: parse error on input ‘of’
-*Log Data.Function Data.Functor Prelude Data.Text.Prettyprint.Doc
-λ> :t runLoggingT x (\l -> xx l (undefined::PageWidth) stderr def)
-runLoggingT x (\l -> xx l (undefined::PageWidth) stderr def)
-  :: forall {m :: * -> *} {a}. MonadIO m => m a
--}
-
-xx ∷ MonadIO μ ⇒ PageWidth → Handle → LogRenderOpts → Log ω → μ ()
-xx pw fd lro l = liftIO $ forM_ (toList l)
-                                (\ x → RenderTerminal.renderIO fd (layoutPretty (LayoutOptions pw) (lroRendererAnsi lro x)))
-
-xx' ∷ MonadIO μ ⇒
-      PageWidth
-    → Handle
-    → LogRenderOpts
-    → (Handle → SimpleDocStream RenderTerminal.AnsiStyle → IO ())
-    → Log ω
-    → μ ()
-xx' pw fd lro renderer l =
-  liftIO $ forM_ (toList l)
-                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
-                                                  (lroRendererAnsi lro x)))
-
-xx'' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → LogRenderOpts
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → (Handler μ (Doc ρ) → μ α)
-     → Log ω
-     → μ α
-xx'' pw fd lro renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
-               renderer2 f l
-  = do
-  liftIO $ forM_ (toList l)
-                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
-                                                  (renderer2 x)))
-  f (const $ return ())
-
-xx''' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → (Handler μ (Doc ρ) → μ α)
-     → Log ω
-     → μ α
-xx''' pw fd renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
-           renderer2 f l
-  = do
-  liftIO $ forM_ (toList l)
-                 (\ x → renderer fd (layoutPretty (LayoutOptions pw)
-                                                  (renderer2 x)))
-  f (const $ return ())
-
-xx'''' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → Log ω
-     → μ ()
-xx'''' pw fd renderer -- ∷ (Handle → SimpleDocStream ρ → IO())
-           renderer2 l
-  = do
-  liftIO $ forM_ (toList l)
-                 (\ x → do renderer fd (layoutPretty (LayoutOptions pw)
-                                                     (renderer2 x))
-                           hPutStrLn fd "")
---  f (const $ return ())
-
-yy ∷ MonadIO μ ⇒ PageWidth → Handle → LogRenderOpts → LoggingT (Log ω) μ α → μ α
-yy pw fd lro = (flip runLoggingT) (xx pw fd lro)
-
-yy' ∷ MonadIO μ ⇒
-      PageWidth
-    → Handle
-    → LogRenderOpts
-    → (Handle → SimpleDocStream RenderTerminal.AnsiStyle → IO ())
-    → LoggingT (Log ω) μ α
-    → μ α
-yy' pw fd lro renderer = (flip runLoggingT) (xx' pw fd lro renderer)
-
-yy'' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → LogRenderOpts
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → (Handler μ (Doc ρ) → μ ()) -- f -- that should be an α
-     → LoggingT (Log ω) μ α
-     → μ α
-yy'' pw fd lro renderer renderer2 f =
-  (flip runLoggingT) (xx'' pw fd lro renderer renderer2 f)
-
-yy''' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → (Handler μ (Doc ρ) → μ ()) -- f -- that should be an α
-     → LoggingT (Log ω) μ α
-     → μ α
-yy''' pw fd renderer renderer2 f =
-  (flip runLoggingT) (xx''' pw fd renderer renderer2 f)
-
-yy'''' ∷ MonadIO μ ⇒
-       PageWidth
-     → Handle
-     → (Handle → SimpleDocStream ρ → IO ())
-     → (LogEntry ω → Doc ρ)
-     → LoggingT (Log ω) μ α
-     → μ α
-yy'''' pw fd renderer renderer2 =
-  (flip runLoggingT) (xx'''' pw fd renderer renderer2)
-
--- ff ∷ Monad μ ⇒ (β → μ γ) → LoggingT β μ α → μ α
-ff ∷ Monad μ ⇒ Handler μ β → LoggingT β μ α → μ α
-ff f l = runLoggingT l (const () ⩺ f)
-
-zz ∷ Monad η ⇒ (LogEntry ω → Doc ρ) → LoggingT (Log ω) η α → (Doc ρ → η()) → η α
-zz renderEntry io =
-  let vsep' [] = Nothing
-      vsep' xs = Just $ vsep xs
-      -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
-      renderDoc   = vsep' ∘ fmap renderEntry ∘ otoList
-      -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
-   in \ h →
-        runLoggingT io ((\ case Just d → h d; Nothing → return ()) ∘ renderDoc)
-
-zz' ∷ Monad η ⇒ LoggingT (Maybe (Doc ρ)) η α → (Doc ρ → η()) → η α
-zz' io =
-  let vsep' [] = Nothing
-      vsep' xs = Just $ vsep xs
-      -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
-      -- renderDoc   = vsep' ∘ fmap renderEntry ∘ otoList
-      -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
-   in \ h →
-        runLoggingT io ((\ case Just d → h d; Nothing → return ()))
-
--- zz'' ∷ Monad η ⇒ (Doc ρ → η()) → η α
--- zz'' = \ h → (flip runLoggingT) ((\ case Just d → h d; Nothing → return ()))
+   in (flip runLoggingT) (renderEach)
 
 ----------------------------------------
 
@@ -664,6 +525,7 @@ fileBatchingOptions = BatchingOptions { flushMaxDelay     = 1_000_000
     and drop messages rather than blocking if the queue fills (which should
     be unlikely, with a length of 100 & 0.1s flush).
  -}
+{-
 ttyBatchingOptions ∷ BatchingOptions
 -- The max delay is a matter of experimentation; too high, and messages appear
 -- long after their effects on stdout are apparent (not *wrong*, but a bit
@@ -674,6 +536,7 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 2_000
                                      , blockWhenFull     = False
                                      , flushMaxQueueSize = 100
                                      }
+-}
 
 ----------------------------------------
 
@@ -681,12 +544,12 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 2_000
 logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
               (Handle → SimpleDocStream ρ → IO()) -- ^ write an SDSρ to Handle
             → (LogEntry ω → Doc ρ)                -- ^ render a LogEntry
-            → BatchingOptions
+            → Maybe BatchingOptions
             → PageWidth
             → Handle
             → LoggingT (Log ω) μ α
             → μ α
-logToHandle renderIO renderEntry bopts width fh io =
+logToHandle renderIO renderEntry (Just bopts) width fh io =
   let -- `vsep` returns an emptyDoc for an empty list; that results in a blank
       -- line.  We don't want that; the blank line appears whenever a log was
       -- filtered; which would really suck for heavily filtered logs (thus
@@ -702,14 +565,16 @@ logToHandle renderIO renderEntry bopts width fh io =
       -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
       handler h   =
         runLoggingT io ((\ case Just d → h d; Nothing → return ()) ∘ renderDoc)
---   in withFDHandler renderIO width bopts fh handler
-   in yy'''' width fh renderIO renderEntry io
+   in withFDHandler renderIO width bopts fh handler
+
+logToHandle renderIO renderEntry Nothing width fh io =
+  withSimpleHandler width fh renderIO renderEntry io
 
 --------------------
 
 {- | Write a Log to a filehandle, with given options but no adornments. -}
 logToHandleNoAdornments ∷ (MonadIO μ, MonadMask μ) ⇒
-                          BatchingOptions
+                          Maybe BatchingOptions
                         → LogRenderOpts
                         → Handle
                         → LoggingT (Log ω) μ α
@@ -721,7 +586,7 @@ logToHandleNoAdornments bopts lro =
 
 {- | Write a Log to a filehandle, with given options and Ansi adornments. -}
 logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
-                  BatchingOptions
+                  Maybe BatchingOptions
                 → LogRenderOpts
                 → Handle
                 → LoggingT (Log ω) μ α
@@ -735,7 +600,7 @@ logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
 logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
              [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
 logToFile' ls = let lro = logRenderOpts' ls Unbounded
-                 in logToHandleNoAdornments fileBatchingOptions lro
+                 in logToHandleNoAdornments (Just fileBatchingOptions) lro
 
 --------------------
 
@@ -748,7 +613,7 @@ logToTTY' ls h io = do
               Just sz → let width = AvailablePerLine (TerminalSize.width sz) 1.0
                          in logRenderOpts' ls width
               Nothing → logRenderOpts' ls Unbounded
-  logToHandleAnsi ttyBatchingOptions lro h io
+  logToHandleAnsi Nothing lro h io
 
 --------------------
 

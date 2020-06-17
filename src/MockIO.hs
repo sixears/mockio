@@ -3,7 +3,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO
-  ( DoMock(..), mkIO, tests )
+  ( DoMock(..), mkIOL, mkIOL', tests )
 where
 
 -- base --------------------------------
@@ -31,7 +31,7 @@ import Log.LogEntry  ( logEntry )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, Severity( Informational ), logMessage
+import Control.Monad.Log  ( MonadLog, Severity( Informational )
                           , runPureLoggingT )
 
 -- monadio-plus ------------------------
@@ -112,14 +112,29 @@ _li1 = do
 data DoMock = DoMock | NoMock
   deriving (Eq,Show)
 
-mkIO ∷ ∀ ω τ μ α .
-       (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
-       Severity → IOClass → (DoMock → τ) → α → IO α → DoMock → μ α
-mkIO sv ioc lg mock_value io mock = do
+{- | Create an IO action that may be mocked; and log it. -}
+mkIOL' ∷ ∀ ω τ μ α .
+         (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+         Severity     -- ^ log severity
+       → IOClass      -- ^ log with this IOClass
+       → (DoMock → τ) -- ^ log message, is given {Do,No}Mock so message can
+                      -- ^ visually identify whether it really happened
+       → IO α         -- ^ mock value; IO is available here so that, e.g., in
+                      -- ^ case of mock a file open, /dev/null is opened instead
+       → IO α         -- ^ the IO to perform when not mocked
+       → DoMock       -- ^ whether to mock
+       → μ α
+-- XXX Split the mock & the log
+mkIOL' sv ioc lg mock_value io mock = do
   logIO sv (def & ioClass ⊢ ioc) (lg mock)
   case mock of
     NoMock → liftIO io
-    DoMock → return mock_value
+    DoMock → liftIO mock_value
+
+mkIOL ∷ ∀ ω τ μ α .
+        (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+        Severity → IOClass → τ → α → IO α → DoMock → μ α
+mkIOL sv ioc lg mock_value = mkIOL' sv ioc (const lg) (return mock_value)
 
 -- XXX simplify logging
 -- XXX simple functions for severity
@@ -129,7 +144,7 @@ mkIO sv ioc lg mock_value io mock = do
 -- enhancements: toDoc(), set mock text
 readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
          String → DoMock → μ Text
-readFn s = mkIO Informational IORead (const $ [fmtT|read %s|] s) "mock text" $
+readFn s = mkIOL' Informational IORead (const $ [fmtT|read %s|] s) (return "mock text") $
            readFile s
 
 readFnTests ∷ TestTree
