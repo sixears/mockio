@@ -127,8 +127,9 @@ doMain opts = do
   fh ← case writeFileName opts of
          Nothing  → return stdout
          Just wfn → do
-                  let logmsg = [fmtT|write %t|] fn
-                  mkIOL' Notice IOWrite (const logmsg)
+                  let logmsg DoMock = [fmtT|(write %t)|] wfn
+                      logmsg NoMock = [fmtT|write %t|] wfn
+                  mkIOL' Notice IOWrite logmsg
                                 (openFile "/dev/null" WriteMode)
                                 (openFile (unpack wfn) WriteMode) mock
                       
