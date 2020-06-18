@@ -3,7 +3,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO
-  ( DoMock(..), mkIOL, mkIOL', tests )
+  ( DoMock(..), mkIO, mkIO', tests )
 where
 
 -- base --------------------------------
@@ -25,7 +25,7 @@ import Data.Default  ( Default( def ) )
 
 -- log-plus ----------------------------
 
-import Log           ( CSOpt( FullCallStack ), Log, ToDoc_
+import Log           ( CSOpt( FullCallStack ), Log, ToDoc_( toDoc_ )
                      , logIO, logIOT, logToStderr )
 import Log.LogEntry  ( logEntry )
 
@@ -46,7 +46,7 @@ import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc  ( pretty )
+import Data.Text.Prettyprint.Doc  ( parens, pretty )
 
 -- tasty -------------------------------
 
@@ -113,7 +113,7 @@ data DoMock = DoMock | NoMock
   deriving (Eq,Show)
 
 {- | Create an IO action that may be mocked; and log it. -}
-mkIOL' ∷ ∀ ω τ μ α .
+mkIO' ∷ ∀ ω τ μ α .
          (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
          Severity     -- ^ log severity
        → IOClass      -- ^ log with this IOClass
@@ -124,17 +124,22 @@ mkIOL' ∷ ∀ ω τ μ α .
        → IO α         -- ^ the IO to perform when not mocked
        → DoMock       -- ^ whether to mock
        → μ α
--- XXX Split the mock & the log
-mkIOL' sv ioc lg mock_value io mock = do
+mkIO' sv ioc lg mock_value io mock = do
   logIO sv (def & ioClass ⊢ ioc) (lg mock)
   case mock of
     NoMock → liftIO io
     DoMock → liftIO mock_value
 
-mkIOL ∷ ∀ ω τ μ α .
+{- | Mildly simplified `mkIO'`, specifically with a constant log message
+     (that is surrounded in parens in case of DoMock); and a non-IO mock value.
+ -}
+mkIO ∷ ∀ ω τ μ α .
         (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
         Severity → IOClass → τ → α → IO α → DoMock → μ α
-mkIOL sv ioc lg mock_value = mkIOL' sv ioc (const lg) (return mock_value)
+mkIO sv ioc lg mock_value io mock =
+  let plog l DoMock = parens (toDoc_ l)
+      plog l NoMock = toDoc_ l
+   in mkIO' sv ioc (plog lg) (return mock_value) io mock
 
 -- XXX simplify logging
 -- XXX simple functions for severity
@@ -144,7 +149,7 @@ mkIOL sv ioc lg mock_value = mkIOL' sv ioc (const lg) (return mock_value)
 -- enhancements: toDoc(), set mock text
 readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
          String → DoMock → μ Text
-readFn s = mkIOL' Informational IORead (const $ [fmtT|read %s|] s) (return "mock text") $
+readFn s = mkIO' Informational IORead (const $ [fmtT|read %s|] s) (return "mock text") $
            readFile s
 
 readFnTests ∷ TestTree

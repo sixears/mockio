@@ -1,5 +1,7 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
 import Debug.Trace  ( trace, traceShow )
@@ -14,12 +16,14 @@ import Control.Applicative     ( many, optional )
 import Control.Monad           ( forM_, return, when )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Bool               ( Bool( False, True ), otherwise )
-import Data.Function           ( ($), const )
+import Data.Either             ( Either( Left, Right ) )
+import Data.Function           ( ($), const, flip, id )
 import Data.List               ( take )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.Ord                ( (<), (>) )
 import System.IO               ( IO, IOMode( WriteMode )
                                , hClose, openFile, stdout )
+import Text.Show               ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
@@ -28,9 +32,18 @@ import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 import Data.Ord.Unicode       ( (≤) )
 
+-- data-textual ------------------------
+
+import Data.Textual  ( Printable( print ) )
+
 -- fluffy ------------------------------
 
 import Fluffy.Foldable  ( length )
+
+-- lens --------------------------------
+
+import Control.Lens.Prism   ( Prism' )
+import Control.Lens.Review  ( (#) )
 
 -- log-plus ----------------------------
 
@@ -38,14 +51,22 @@ import Log  ( CSOpt( NoCallStack ), Log, filterSeverity, logToStderr )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, Severity( Debug, Informational
-                                              , Notice, Warning ) )
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
+                                                        , Notice, Warning ) )
+
+-- mtl ---------------------------------
+
+import Control.Monad.Except  ( MonadError, throwError )
+
+-- monaderror-io -----------------------
+
+import MonadError  ( ѥ )
 
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
-import Data.MoreUnicode.Monad        ( (≪) )
+import Data.MoreUnicode.Monad        ( (≪), (≫) )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
@@ -60,6 +81,10 @@ import Options.Applicative  ( execParser, flag, flag', fullDesc, help, helper, i
 import Data.Text     ( Text, lines, unpack )
 import Data.Text.IO  ( hPutStrLn, readFile )
 
+-- text-printer ------------------------
+
+import qualified  Text.Printer  as  P
+
 -- tfmt --------------------------------
 
 import Text.Fmt  ( fmt, fmtT )
@@ -68,7 +93,7 @@ import Text.Fmt  ( fmt, fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ), mkIOL, mkIOL' )
+import MockIO          ( DoMock( DoMock, NoMock ), mkIO, mkIO' )
 import MockIO.IOClass  ( HasIOClass( ioClass ), IOClass( IORead, IOWrite ) )
 
 --------------------------------------------------------------------------------
@@ -86,55 +111,84 @@ data Options = Options { fileName ∷ Text
 fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
 fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 
+data UsageError = UsageError Text
+  deriving Show
+
+class AsUsageError ε where
+  _UsageError ∷ Prism' ε UsageError
+
+instance AsUsageError UsageError where
+  _UsageError = id
+
+instance Printable UsageError where
+  print (UsageError txt) = P.text txt
+
+usageError ∷ AsUsageError ε ⇒ Text → ε
+usageError t = _UsageError # UsageError t
+
+throwUsage ∷ (AsUsageError ε, MonadError ε η) ⇒ Text → η ω
+throwUsage t = throwError $ usageError t
+
 -- XXX Change error for MonadError
+-- XXX AsUsageError
+verbosityLevel ∷ (AsUsageError ε, MonadError ε η) ⇒ Options → η Severity
 verbosityLevel opts =
   let v = verbose opts
       q = quiet opts
       warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
       warnTooHigh x = [fmt|warning: attempt to exceed max verbosity level %w|] x
-      succs 0 x = x
-      succs n x | x ≡ maxBound = error (warnTooHigh x)
+      succs 0 x = return x
+      succs n x | x ≡ maxBound = throwUsage (warnTooHigh x)
                 | otherwise    = succs (n-1) (succ x)
-      preds 0 x = x
-      preds n x | x ≡ minBound = error (warnTooLow x)
+      preds 0 x = return x
+      preds n x | x ≡ minBound = throwUsage (warnTooLow x)
                 | otherwise    = preds (n-1) (pred x)
       l = case v > q of
             True  → succs (v-q) Notice
             False → preds (q-v) Notice
    in l
 
-filterVerbosity opts = filterSeverity (≤ verbosityLevel opts)
+filterVerbosity ∷ ∀ ε η υ ω α .
+                  (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ) ⇒
+                  Options → η (LoggingT (Log ω) υ α → υ α)
+filterVerbosity opts = verbosityLevel opts ≫ return ∘ filterSeverity ∘ flip (≤)
 
 main ∷ IO ()
 main = do o ← execParser opts
-          -- writefn, Notice
-          logToStderr NoCallStack (filterVerbosity o (doMain o)) -- ≪ execParser opts
+{-
+          filt ← filterVerbosity o ≫ \ case
+                                         Left e → error e
+                                         Right r → return r
+-}
+--          logToStderr NoCallStack (doMain o)
+          ѥ (filterVerbosity @UsageError o ≫ \ filt → logToStderr NoCallStack (filt $ doMain o)) ≫ \ case { Left e → error $ show e; Right r → return r }
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
              opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
              parser = Options ⊳ strArgument (metavar "FILE")
-                              ⊵ optional (strOption ( long "output"
+                              ⊵ optional (strOption ( long "output" ⊕ short 'o'
                                                     ⊕ metavar "FILE"
                                                     ⊕ help "write output here")
                                          )
                               ⊵ (length ⊳ many (flag' () (short 'v')))
                               ⊵ (length ⊳ many (flag' () (long "quiet")))
-                              ⊵ (flag NoMock DoMock (long "dry-run" ⊕ short 'n' ⊕ help "dry run"))
+                              ⊵ (flag NoMock DoMock ( long "dry-run" ⊕ short 'n'
+                                                    ⊕ help "dry run"))
 
 doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ) ⇒ Options → μ ()
 doMain opts = do
-  let fn   = fileName opts
-      mock = dryRun opts
+  let fn     = fileName opts
+      dry_run = dryRun opts
   fh ← case writeFileName opts of
          Nothing  → return stdout
          Just wfn → do
                   let logmsg DoMock = [fmtT|(write %t)|] wfn
                       logmsg NoMock = [fmtT|write %t|] wfn
-                  mkIOL' Notice IOWrite logmsg
+                  mkIO' Notice IOWrite logmsg
                                 (openFile "/dev/null" WriteMode)
-                                (openFile (unpack wfn) WriteMode) mock
+                                (openFile (unpack wfn) WriteMode) dry_run
                       
-  txt ← mkIOL Informational IORead ([fmtT|read %t|] fn) "mock text"
-             (readFile (unpack fn)) NoMock -- XXX
+  txt ← mkIO Informational IORead ([fmtT|read %t|] fn) "mock text"
+             (readFile (unpack fn)) NoMock
   liftIO $ forM_ (take 10 (lines txt)) (hPutStrLn fh)
   when (fh ≢ stdout) $ liftIO (hClose fh)
   return ()
