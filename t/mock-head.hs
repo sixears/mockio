@@ -13,7 +13,8 @@ import Prelude  ( (-), error, fromIntegral, maxBound, minBound, pred, succ )
 import qualified  GHC.Enum
 
 import Control.Applicative     ( many, optional )
-import Control.Monad           ( forM_, return, when )
+import Control.Exception       ( Exception )
+import Control.Monad           ( Monad, forM_, return, when )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Bool               ( Bool( False, True ), otherwise )
 import Data.Either             ( Either( Left, Right ) )
@@ -34,7 +35,11 @@ import Data.Ord.Unicode       ( (≤) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ) )
+import Data.Textual  ( Printable( print ), toString )
+
+-- exited ------------------------------
+
+import qualified  Exited2  as  Exited
 
 -- fluffy ------------------------------
 
@@ -56,7 +61,7 @@ import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( MonadError, throwError )
+import Control.Monad.Except  ( ExceptT, MonadError, throwError )
 
 -- monaderror-io -----------------------
 
@@ -66,7 +71,7 @@ import MonadError  ( ѥ )
 
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
-import Data.MoreUnicode.Monad        ( (≪), (≫) )
+import Data.MoreUnicode.Monad        ( (≪), (≫), (⪼) )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
@@ -114,6 +119,8 @@ fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 data UsageError = UsageError Text
   deriving Show
 
+instance Exception UsageError
+
 class AsUsageError ε where
   _UsageError ∷ Prism' ε UsageError
 
@@ -153,15 +160,29 @@ filterVerbosity ∷ ∀ ε η υ ω α .
                   Options → η (LoggingT (Log ω) υ α → υ α)
 filterVerbosity opts = verbosityLevel opts ≫ return ∘ filterSeverity ∘ flip (≤)
 
+-- XXX Version that supplies o to each of filterVerbosity & io
+-- XXX Version that expects () from IO, and specializes on UsageError
+{- | The `LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) α` is satisfied by,
+     e.g.,
+     `MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒ μ α`
+     though quite honestly, I couldn't say why the double `Logging`.
+ -}
+xx ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
+     Options → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
+xx o io = Exited.doMain $
+  filterVerbosity o ≫ \ filt -> logToStderr NoCallStack (filt io) ⪼ return Exited.exitCodeSuccess
+
+-- Exited.doMain (filterVerbosity @UsageError o >>= \ filt -> logToStderr NoCallStack (filt $ doMain o) >> return System.Exit.exitSuccess)
+
 main ∷ IO ()
 main = do o ← execParser opts
-{-
-          filt ← filterVerbosity o ≫ \ case
-                                         Left e → error e
-                                         Right r → return r
--}
---          logToStderr NoCallStack (doMain o)
-          ѥ (filterVerbosity @UsageError o ≫ \ filt → logToStderr NoCallStack (filt $ doMain o)) ≫ \ case { Left e → error $ show e; Right r → return r }
+          -- XXX Tidy This Up
+          -- XXX UsageError
+          -- XXX Add CallStack Options
+          -- XXX More verbose options, incl. file,level
+--           ѥ (filterVerbosity @UsageError o ≫ \ filt → logToStderr NoCallStack (filt $ doMain o)) ≫ \ case { Left e → error $ show e; Right r → return r }
+--          Exited.doMain (filterVerbosity @UsageError o ≫ \ filt -> logToStderr NoCallStack (filt $ doMain o) ⪼ return Exited.exitCodeSuccess)
+          xx @UsageError o (doMain o)
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
              opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
              parser = Options ⊳ strArgument (metavar "FILE")
@@ -174,10 +195,12 @@ main = do o ← execParser opts
                               ⊵ (flag NoMock DoMock ( long "dry-run" ⊕ short 'n'
                                                     ⊕ help "dry run"))
 
-doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ) ⇒ Options → μ ()
+doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
+         Options → μ ()
 doMain opts = do
   let fn     = fileName opts
       dry_run = dryRun opts
+  when False (throwUsage "fake error")
   fh ← case writeFileName opts of
          Nothing  → return stdout
          Just wfn → do
