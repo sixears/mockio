@@ -115,11 +115,6 @@ import MockIO.IOClass  ( HasIOClass( ioClass ), IOClass( IORead, IOWrite ) )
 data Options = Options { fileName      ∷ Text
                        , writeFileName ∷ Maybe Text
                        , _stdOptions    ∷ StdOptions
-{-
-                       , verbose ∷ ℕ
-                       , quiet   ∷ ℕ
-                       , dryRun ∷ DoMock
--}
                        }
 
 instance HasStdOptions Options where
@@ -190,16 +185,12 @@ xx o io = Exited.doMain $ do
   logToStderr NoCallStack (filt io)
   return Exited.exitCodeSuccess
 
--- Exited.doMain (filterVerbosity @UsageError o >>= \ filt -> logToStderr NoCallStack (filt $ doMain o) >> return System.Exit.exitSuccess)
-
 main ∷ IO ()
 main = do o ← execParser opts
           -- XXX Tidy This Up
           -- XXX UsageError
           -- XXX Add CallStack Options
           -- XXX More verbose options, incl. file,level
---           ѥ (filterVerbosity @UsageError o ≫ \ filt → logToStderr NoCallStack (filt $ doMain o)) ≫ \ case { Left e → error $ show e; Right r → return r }
---          Exited.doMain (filterVerbosity @UsageError o ≫ \ filt -> logToStderr NoCallStack (filt $ doMain o) ⪼ return Exited.exitCodeSuccess)
           xx @UsageError (o ⊣ stdOptions) (doMain o)
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
              opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
@@ -209,12 +200,6 @@ main = do o ← execParser opts
                                                     ⊕ help "write output here")
                                          )
                               ⊵ parseStdOptions
-{-
-                              ⊵ (length ⊳ many (flag' () (short 'v')))
-                              ⊵ (length ⊳ many (flag' () (long "quiet")))
-                              ⊵ (flag NoMock DoMock ( long "dry-run" ⊕ short 'n'
-                                                    ⊕ help "dry run"))
--}
 
 doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
          Options → μ ()
