@@ -74,6 +74,9 @@ instance ToExitCode Word8 where
   toExitCode 0 = ExitSuccess
   toExitCode i = ExitFailure $ fromIntegral i
 
+instance ToExitCode () where
+  toExitCode () = ExitSuccess
+
 ------------------------------------------------------------
 
 {- | Like `System.Exit.exitWith`, but allows for `Word8`; lifts to `MonadIO`,

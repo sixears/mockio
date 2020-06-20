@@ -47,6 +47,7 @@ import Fluffy.Foldable  ( length )
 
 -- lens --------------------------------
 
+import Control.Lens.Lens    ( Lens', lens )
 import Control.Lens.Prism   ( Prism' )
 import Control.Lens.Review  ( (#) )
 
@@ -71,15 +72,21 @@ import MonadError  ( ѥ )
 
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
+import Data.MoreUnicode.Lens         ( (⊣) )
 import Data.MoreUnicode.Monad        ( (≪), (≫), (⪼) )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( execParser, flag, flag', fullDesc, help, helper, info
-                            , long, metavar, progDesc, short, strArgument
-                            , strOption
+import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
+                            , helper, info, long, metavar, progDesc, short
+                            , strArgument, strOption
                             )
+
+-- std-main ----------------------------
+
+import StdMain  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions
+                , parseStdOptions, quietitude, verbosity )
 
 -- text --------------------------------
 
@@ -105,12 +112,21 @@ import MockIO.IOClass  ( HasIOClass( ioClass ), IOClass( IORead, IOWrite ) )
 
 -- a very simple version of 'head', for testing MockIO
 
-data Options = Options { fileName ∷ Text
+data Options = Options { fileName      ∷ Text
                        , writeFileName ∷ Maybe Text
+                       , _stdOptions    ∷ StdOptions
+{-
                        , verbose ∷ ℕ
                        , quiet   ∷ ℕ
                        , dryRun ∷ DoMock
+-}
                        }
+
+instance HasStdOptions Options where
+  stdOptions = lens _stdOptions (\ o s → o { _stdOptions = s })
+
+instance HasDryRun Options where
+  dryRun = stdOptions ∘ dryRun
 
 
 fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
@@ -138,10 +154,10 @@ throwUsage t = throwError $ usageError t
 
 -- XXX Change error for MonadError
 -- XXX AsUsageError
-verbosityLevel ∷ (AsUsageError ε, MonadError ε η) ⇒ Options → η Severity
-verbosityLevel opts =
-  let v = verbose opts
-      q = quiet opts
+verbosityLevel ∷ (AsUsageError ε, MonadError ε η) ⇒ StdOptions → η Severity
+verbosityLevel stdOpts =
+  let v = stdOpts ⊣ verbosity
+      q = stdOpts ⊣ quietitude
       warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
       warnTooHigh x = [fmt|warning: attempt to exceed max verbosity level %w|] x
       succs 0 x = return x
@@ -157,8 +173,8 @@ verbosityLevel opts =
 
 filterVerbosity ∷ ∀ ε η υ ω α .
                   (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ) ⇒
-                  Options → η (LoggingT (Log ω) υ α → υ α)
-filterVerbosity opts = verbosityLevel opts ≫ return ∘ filterSeverity ∘ flip (≤)
+                  StdOptions → η (LoggingT (Log ω) υ α → υ α)
+filterVerbosity stdOpts = verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)
 
 -- XXX Version that supplies o to each of filterVerbosity & io
 -- XXX Version that expects () from IO, and specializes on UsageError
@@ -168,9 +184,11 @@ filterVerbosity opts = verbosityLevel opts ≫ return ∘ filterSeverity ∘ fli
      though quite honestly, I couldn't say why the double `Logging`.
  -}
 xx ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
-     Options → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
-xx o io = Exited.doMain $
-  filterVerbosity o ≫ \ filt -> logToStderr NoCallStack (filt io) ⪼ return Exited.exitCodeSuccess
+     StdOptions → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
+xx o io = Exited.doMain $ do
+  filt ← filterVerbosity o
+  logToStderr NoCallStack (filt io)
+  return Exited.exitCodeSuccess
 
 -- Exited.doMain (filterVerbosity @UsageError o >>= \ filt -> logToStderr NoCallStack (filt $ doMain o) >> return System.Exit.exitSuccess)
 
@@ -182,7 +200,7 @@ main = do o ← execParser opts
           -- XXX More verbose options, incl. file,level
 --           ѥ (filterVerbosity @UsageError o ≫ \ filt → logToStderr NoCallStack (filt $ doMain o)) ≫ \ case { Left e → error $ show e; Right r → return r }
 --          Exited.doMain (filterVerbosity @UsageError o ≫ \ filt -> logToStderr NoCallStack (filt $ doMain o) ⪼ return Exited.exitCodeSuccess)
-          xx @UsageError o (doMain o)
+          xx @UsageError (o ⊣ stdOptions) (doMain o)
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
              opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
              parser = Options ⊳ strArgument (metavar "FILE")
@@ -190,16 +208,19 @@ main = do o ← execParser opts
                                                     ⊕ metavar "FILE"
                                                     ⊕ help "write output here")
                                          )
+                              ⊵ parseStdOptions
+{-
                               ⊵ (length ⊳ many (flag' () (short 'v')))
                               ⊵ (length ⊳ many (flag' () (long "quiet")))
                               ⊵ (flag NoMock DoMock ( long "dry-run" ⊕ short 'n'
                                                     ⊕ help "dry run"))
+-}
 
 doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
          Options → μ ()
 doMain opts = do
-  let fn     = fileName opts
-      dry_run = dryRun opts
+  let fn      = fileName opts
+      dry_run = opts ⊣ dryRun
   when False (throwUsage "fake error")
   fh ← case writeFileName opts of
          Nothing  → return stdout
