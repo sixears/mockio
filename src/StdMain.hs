@@ -9,70 +9,36 @@ where
 
 -- base --------------------------------
 
-import Control.Applicative  ( many )
-import Control.Exception    ( Exception )
-import Control.Monad        ( return )
-import Data.Function        ( ($), flip, id )
-import System.IO            ( IO )
-
--- base-unicode-symbols ----------------
-
-import Data.Function.Unicode  ( (∘) )
-import Data.Monoid.Unicode    ( (⊕) )
-import Data.Ord.Unicode       ( (≤) )
+import Control.Exception  ( Exception )
+import Control.Monad      ( return )
+import Data.Function      ( ($) )
+import System.IO          ( IO )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ), toString )
+import Data.Textual  ( Printable )
 
 -- exited ------------------------------
 
 import qualified  Exited2  as  Exited
 
--- fluffy ------------------------------
-
-import Fluffy.Foldable  ( length )
-
--- lens --------------------------------
-
-import Control.Lens.Lens    ( Lens', lens )
-
 -- log-plus ----------------------------
 
-import Log  ( CSOpt( NoCallStack ), Log, filterSeverity, logToStderr )
+import Log  ( CSOpt( NoCallStack ), Log, logToStderr )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
-                                                        , Notice, Warning ) )
-
--- mockio ------------------------------
-
-import MockIO  ( DoMock( DoMock, NoMock ) )
-
--- more-unicode ------------------------
-
-import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
-import Data.MoreUnicode.Functor      ( (⊳) )
-import Data.MoreUnicode.Monad        ( (≫) )
-import Data.MoreUnicode.Natural      ( ℕ )
+import Control.Monad.Log  ( LoggingT )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError, throwError )
-
--- optparse-applicative ----------------
-
-import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
-                            , helper, info, long, metavar, progDesc, short
-                            , strArgument, strOption
-                            )
+import Control.Monad.Except  ( ExceptT )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.StdOptions  ( StdOptions, filterVerbosity, verbosityLevel )
+import StdMain.StdOptions  ( StdOptions, filterVerbosity )
 import StdMain.UsageError  ( AsUsageError )
 
 --------------------------------------------------------------------------------

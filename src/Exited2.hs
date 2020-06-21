@@ -31,7 +31,7 @@ import Data.Function           ( ($), id )
 import Data.Word               ( Word8 )
 import System.Environment      ( getProgName )
 import System.Exit             ( ExitCode( ExitFailure, ExitSuccess ) )
-import System.IO               ( IO, hPutStrLn, putStrLn, stderr )
+import System.IO               ( IO, hPutStrLn, stderr )
 
 -- base-unicode-symbols ----------------
 

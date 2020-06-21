@@ -13,7 +13,7 @@ import Text.Show          ( Show )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ), toString )
+import Data.Textual  ( Printable( print ) )
 
 -- lens --------------------------------
 
@@ -22,7 +22,7 @@ import Control.Lens.Review  ( (#) )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError, throwError )
+import Control.Monad.Except  ( MonadError, throwError )
 
 -- text --------------------------------
 

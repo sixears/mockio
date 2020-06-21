@@ -9,7 +9,7 @@ module StdMain.StdOptions
   , filterVerbosity, parseStdOptions, quietitude, verbosity, verbosityLevel )
 where
 
-import Prelude  ( (-), error, fromIntegral, maxBound, minBound, pred, succ )
+import Prelude  ( (-), maxBound, minBound, pred, succ )
 
 -- base --------------------------------
 
@@ -37,12 +37,11 @@ import Control.Lens.Lens    ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log  ( CSOpt( NoCallStack ), Log, filterSeverity, logToStderr )
+import Log  ( Log, filterSeverity )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
-                                                        , Notice, Warning ) )
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Notice ) )
 
 -- mockio ------------------------------
 
@@ -50,7 +49,7 @@ import MockIO  ( DoMock( DoMock, NoMock ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
+import Data.MoreUnicode.Applicative  ( (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
 import Data.MoreUnicode.Lens         ( (⊣) )
 import Data.MoreUnicode.Monad        ( (≫) )
@@ -58,14 +57,11 @@ import Data.MoreUnicode.Natural      ( ℕ )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError, throwError )
+import Control.Monad.Except  ( MonadError )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
-                            , helper, info, long, metavar, progDesc, short
-                            , strArgument, strOption
-                            )
+import Options.Applicative  ( Parser, flag, flag', help, long, short )
 
 -- tfmt --------------------------------
 

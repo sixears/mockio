@@ -4,82 +4,54 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
-import Debug.Trace  ( trace, traceShow )
-
-import Prelude  ( (-), error, fromIntegral, maxBound, minBound, pred, succ )
+import Prelude  ( fromIntegral )
 
 -- base --------------------------------
 
 import qualified  GHC.Enum
 
-import Control.Applicative     ( many, optional )
-import Control.Exception       ( Exception )
-import Control.Monad           ( Monad, forM_, return, when )
+import Control.Applicative     ( optional )
+import Control.Monad           ( forM_, return, when )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
-import Data.Bool               ( Bool( False, True ), otherwise )
-import Data.Either             ( Either( Left, Right ) )
-import Data.Function           ( ($), const, flip, id )
+import Data.Bool               ( Bool( False ) )
+import Data.Function           ( ($) )
 import Data.List               ( take )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
-import Data.Ord                ( (<), (>) )
 import System.IO               ( IO, IOMode( WriteMode )
                                , hClose, openFile, stdout )
-import Text.Show               ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
-import Data.Eq.Unicode        ( (≡), (≢) )
+import Data.Eq.Unicode        ( (≢) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-import Data.Ord.Unicode       ( (≤) )
-
--- data-textual ------------------------
-
-import Data.Textual  ( Printable( print ), toString )
-
--- exited ------------------------------
-
-import qualified  Exited2  as  Exited
-
--- fluffy ------------------------------
-
-import Fluffy.Foldable  ( length )
 
 -- lens --------------------------------
 
-import Control.Lens.Getter  ( view )
-import Control.Lens.Lens    ( Lens', lens )
-import Control.Lens.Prism   ( Prism' )
-import Control.Lens.Review  ( (#) )
+import Control.Lens.Lens  ( lens )
 
 -- log-plus ----------------------------
 
-import Log  ( CSOpt( NoCallStack ), Log, filterSeverity, logToStderr )
+import Log  ( Log )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
-                                                        , Notice, Warning ) )
+import Control.Monad.Log  ( MonadLog, Severity( Informational, Notice ) )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError, throwError )
-
--- monaderror-io -----------------------
-
-import MonadError  ( ѥ )
+import Control.Monad.Except  ( MonadError )
 
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
 import Data.MoreUnicode.Lens         ( (⊣) )
-import Data.MoreUnicode.Monad        ( (≪), (≫), (⪼) )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
+import Options.Applicative  ( execParser, fullDesc, help
                             , helper, info, long, metavar, progDesc, short
                             , strArgument, strOption
                             )
@@ -88,7 +60,7 @@ import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
 
 import StdMain             ( doMain )
 import StdMain.StdOptions  ( HasDryRun( dryRun ), HasStdOptions( stdOptions )
-                           , StdOptions, parseStdOptions, quietitude,verbosity )
+                           , StdOptions, parseStdOptions )
 import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
 
 -- text --------------------------------
@@ -96,20 +68,16 @@ import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
 import Data.Text     ( Text, lines, unpack )
 import Data.Text.IO  ( hPutStrLn, readFile )
 
--- text-printer ------------------------
-
-import qualified  Text.Printer  as  P
-
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt, fmtT )
+import Text.Fmt  ( fmtT )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
 import MockIO          ( DoMock( DoMock, NoMock ), mkIO, mkIO' )
-import MockIO.IOClass  ( HasIOClass( ioClass ), IOClass( IORead, IOWrite ) )
+import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 --------------------------------------------------------------------------------
 
