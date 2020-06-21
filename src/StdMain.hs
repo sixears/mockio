@@ -1,19 +1,33 @@
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
+-- Move/Factor StdOptions into own file
 module StdMain
-  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions
-  , parseStdOptions, quietitude, verbosity )
+  ( doMain )
 where
 
 -- base --------------------------------
 
 import Control.Applicative  ( many )
-import Data.Function        ( id )
+import Control.Exception    ( Exception )
+import Control.Monad        ( return )
+import Data.Function        ( ($), flip, id )
+import System.IO            ( IO )
 
 -- base-unicode-symbols ----------------
 
+import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
+import Data.Ord.Unicode       ( (≤) )
+
+-- data-textual ------------------------
+
+import Data.Textual  ( Printable( print ), toString )
+
+-- exited ------------------------------
+
+import qualified  Exited2  as  Exited
 
 -- fluffy ------------------------------
 
@@ -23,6 +37,15 @@ import Fluffy.Foldable  ( length )
 
 import Control.Lens.Lens    ( Lens', lens )
 
+-- log-plus ----------------------------
+
+import Log  ( CSOpt( NoCallStack ), Log, filterSeverity, logToStderr )
+
+-- logging-effect ----------------------
+
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug, Informational
+                                                        , Notice, Warning ) )
+
 -- mockio ------------------------------
 
 import MockIO  ( DoMock( DoMock, NoMock ) )
@@ -31,7 +54,12 @@ import MockIO  ( DoMock( DoMock, NoMock ) )
 
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
+import Data.MoreUnicode.Monad        ( (≫) )
 import Data.MoreUnicode.Natural      ( ℕ )
+
+-- mtl ---------------------------------
+
+import Control.Monad.Except  ( ExceptT, MonadError, throwError )
 
 -- optparse-applicative ----------------
 
@@ -40,38 +68,28 @@ import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
                             , strArgument, strOption
                             )
 
+------------------------------------------------------------
+--                     local imports                      --
+------------------------------------------------------------
+
+import StdMain.StdOptions  ( StdOptions, filterVerbosity, verbosityLevel )
+import StdMain.UsageError  ( AsUsageError )
+
 --------------------------------------------------------------------------------
 
-data StdOptions = StdOptions { _verbosity  ∷ ℕ
-                             , _quietitude ∷ ℕ
-                             , _dryRun     ∷ DoMock
-                             }
+-- XXX Version that supplies o to each of filterVerbosity & io
+-- XXX Version that expects () from IO, and specializes on UsageError
+{- | The `LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) α` is satisfied by,
+     e.g.,
+     `MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒ μ α`
+     though quite honestly, I couldn't say why the double `Logging`.
+ -}
+doMain ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
+     StdOptions → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
+doMain o io = Exited.doMain $ do
+  filt ← filterVerbosity o
+  logToStderr NoCallStack (filt io)
+  return Exited.exitCodeSuccess
 
-class HasStdOptions α where
-  stdOptions ∷ Lens' α StdOptions
-
-instance HasStdOptions StdOptions where
-  stdOptions = id
-
-verbosity ∷ Lens' StdOptions ℕ
-verbosity = lens _verbosity (\ s v → s { _verbosity = v })
-
-quietitude ∷ Lens' StdOptions ℕ
-quietitude = lens _quietitude (\ s q → s { _quietitude = q })
-
-class HasDryRun α where
-  dryRun ∷ Lens' α DoMock
-
-instance HasDryRun DoMock where
-  dryRun = id
-
-instance HasDryRun StdOptions where
-  dryRun = lens _dryRun (\ s d → s { _dryRun = d })
-
-parseStdOptions ∷ Parser StdOptions
-parseStdOptions = StdOptions ⊳ (length ⊳ many (flag' () (short 'v')))
-                             ⊵ (length ⊳ many (flag' () (long "quiet")))
-                             ⊵ (flag NoMock DoMock (short 'n' ⊕ long "dry-run"
-                                                              ⊕ help "dry run"))
 
 -- that's all, folks! ----------------------------------------------------------

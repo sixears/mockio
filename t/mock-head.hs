@@ -47,6 +47,7 @@ import Fluffy.Foldable  ( length )
 
 -- lens --------------------------------
 
+import Control.Lens.Getter  ( view )
 import Control.Lens.Lens    ( Lens', lens )
 import Control.Lens.Prism   ( Prism' )
 import Control.Lens.Review  ( (#) )
@@ -85,8 +86,10 @@ import Options.Applicative  ( Parser, execParser, flag, flag', fullDesc, help
 
 -- std-main ----------------------------
 
-import StdMain  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions
-                , parseStdOptions, quietitude, verbosity )
+import StdMain             ( doMain )
+import StdMain.StdOptions  ( HasDryRun( dryRun ), HasStdOptions( stdOptions )
+                           , StdOptions, parseStdOptions, quietitude,verbosity )
+import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
 
 -- text --------------------------------
 
@@ -127,50 +130,6 @@ instance HasDryRun Options where
 fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
 fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 
-data UsageError = UsageError Text
-  deriving Show
-
-instance Exception UsageError
-
-class AsUsageError ε where
-  _UsageError ∷ Prism' ε UsageError
-
-instance AsUsageError UsageError where
-  _UsageError = id
-
-instance Printable UsageError where
-  print (UsageError txt) = P.text txt
-
-usageError ∷ AsUsageError ε ⇒ Text → ε
-usageError t = _UsageError # UsageError t
-
-throwUsage ∷ (AsUsageError ε, MonadError ε η) ⇒ Text → η ω
-throwUsage t = throwError $ usageError t
-
--- XXX Change error for MonadError
--- XXX AsUsageError
-verbosityLevel ∷ (AsUsageError ε, MonadError ε η) ⇒ StdOptions → η Severity
-verbosityLevel stdOpts =
-  let v = stdOpts ⊣ verbosity
-      q = stdOpts ⊣ quietitude
-      warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
-      warnTooHigh x = [fmt|warning: attempt to exceed max verbosity level %w|] x
-      succs 0 x = return x
-      succs n x | x ≡ maxBound = throwUsage (warnTooHigh x)
-                | otherwise    = succs (n-1) (succ x)
-      preds 0 x = return x
-      preds n x | x ≡ minBound = throwUsage (warnTooLow x)
-                | otherwise    = preds (n-1) (pred x)
-      l = case v > q of
-            True  → succs (v-q) Notice
-            False → preds (q-v) Notice
-   in l
-
-filterVerbosity ∷ ∀ ε η υ ω α .
-                  (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ) ⇒
-                  StdOptions → η (LoggingT (Log ω) υ α → υ α)
-filterVerbosity stdOpts = verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)
-
 -- XXX Version that supplies o to each of filterVerbosity & io
 -- XXX Version that expects () from IO, and specializes on UsageError
 {- | The `LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) α` is satisfied by,
@@ -178,12 +137,14 @@ filterVerbosity stdOpts = verbosityLevel stdOpts ≫ return ∘ filterSeverity �
      `MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒ μ α`
      though quite honestly, I couldn't say why the double `Logging`.
  -}
-xx ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
+{-
+xx_ ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
      StdOptions → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
-xx o io = Exited.doMain $ do
+xx_ o io = Exited.doMain $ do
   filt ← filterVerbosity o
   logToStderr NoCallStack (filt io)
   return Exited.exitCodeSuccess
+-}
 
 main ∷ IO ()
 main = do o ← execParser opts
@@ -191,7 +152,7 @@ main = do o ← execParser opts
           -- XXX UsageError
           -- XXX Add CallStack Options
           -- XXX More verbose options, incl. file,level
-          xx @UsageError (o ⊣ stdOptions) (doMain o)
+          doMain @UsageError (o ⊣ stdOptions) (xx o)
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
              opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
              parser = Options ⊳ strArgument (metavar "FILE")
@@ -201,9 +162,9 @@ main = do o ← execParser opts
                                          )
                               ⊵ parseStdOptions
 
-doMain ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
+xx ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
          Options → μ ()
-doMain opts = do
+xx opts = do
   let fn      = fileName opts
       dry_run = opts ⊣ dryRun
   when False (throwUsage "fake error")
