@@ -47,20 +47,22 @@ import Control.Monad.Except  ( MonadError )
 import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
 import Data.MoreUnicode.Lens         ( (⊣) )
+import Data.MoreUnicode.Monoid       ( ю )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( execParser, fullDesc, help
+import Options.Applicative  ( Parser, execParser, fullDesc, help
                             , helper, info, long, metavar, progDesc, short
                             , strArgument, strOption
                             )
 
 -- std-main ----------------------------
 
-import StdMain             ( doMain )
+import StdMain             ( doMain, yy )
 import StdMain.StdOptions  ( HasDryRun( dryRun ), HasStdOptions( stdOptions )
-                           , StdOptions, parseStdOptions )
+                           , StdOptions, SuperStdOptions
+                           , options, parseStdOptions )
 import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
 
 -- text --------------------------------
@@ -85,58 +87,51 @@ import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 data Options = Options { fileName      ∷ Text
                        , writeFileName ∷ Maybe Text
-                       , _stdOptions    ∷ StdOptions
+--                       , _stdOptions    ∷ StdOptions
                        }
 
+{-
 instance HasStdOptions Options where
   stdOptions = lens _stdOptions (\ o s → o { _stdOptions = s })
 
 instance HasDryRun Options where
   dryRun = stdOptions ∘ dryRun
+-}
 
+parseOptions ∷ Parser Options
+parseOptions = Options ⊳ strArgument (metavar "FILE")
+                       ⊵ optional (strOption (ю [ long "output"
+                                                , short 'o'
+                                                , metavar "FILE"
+                                                , help "write output here"
+                                                ])
+                                  )
+--                       ⊵ parseStdOptions
 
 fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
 fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 
--- XXX Version that supplies o to each of filterVerbosity & io
--- XXX Version that expects () from IO, and specializes on UsageError
-{- | The `LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) α` is satisfied by,
-     e.g.,
-     `MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒ μ α`
-     though quite honestly, I couldn't say why the double `Logging`.
- -}
-{-
-xx_ ∷ ∀ ε ω . (Exception ε, Printable ε, AsUsageError ε) ⇒
-     StdOptions → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) () → IO ()
-xx_ o io = Exited.doMain $ do
-  filt ← filterVerbosity o
-  logToStderr NoCallStack (filt io)
-  return Exited.exitCodeSuccess
--}
-
 main ∷ IO ()
-main = do o ← execParser opts
-          -- XXX Tidy This Up
+main = do -- XXX Tidy This Up
           -- XXX UsageError
           -- XXX Add CallStack Options
           -- XXX More verbose options, incl. file,level
-          doMain @UsageError (o ⊣ stdOptions) (xx o)
+          -- XXX stdMain that uses Options+StdOptions object
+          -- XXX use optparse-plus parseOpts 
+          -- XXX pass dryRun to io
+--          o ← execParser opts
+--          doMain @UsageError (o ⊣ stdOptions) (xx o)
+          yy @UsageError parseOptions xx
        where desc   = progDesc "simple 'head' re-implementation to test MockIO"
-             opts   = info (parser ⊴ helper) (fullDesc ⊕ desc)
-             parser = Options ⊳ strArgument (metavar "FILE")
-                              ⊵ optional (strOption ( long "output" ⊕ short 'o'
-                                                    ⊕ metavar "FILE"
-                                                    ⊕ help "write output here")
-                                         )
-                              ⊵ parseStdOptions
+             opts   = info (parseOptions ⊴ helper) (fullDesc ⊕ desc)
 
 xx ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
-         Options → μ ()
+     SuperStdOptions Options → μ ()
 xx opts = do
-  let fn      = fileName opts
+  let fn      = fileName (opts ⊣ options)
       dry_run = opts ⊣ dryRun
   when False (throwUsage "fake error")
-  fh ← case writeFileName opts of
+  fh ← case writeFileName (opts ⊣ options) of
          Nothing  → return stdout
          Just wfn → do
                   let logmsg DoMock = [fmtT|(write %t)|] wfn

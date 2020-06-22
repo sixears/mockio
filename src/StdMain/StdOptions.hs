@@ -1,12 +1,12 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 {-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE ViewPatterns      #-}
 
 -- Move/Factor StdOptions into own file
 module StdMain.StdOptions
-  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions
-  , filterVerbosity, parseStdOptions, quietitude, verbosity, verbosityLevel )
+  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions, SuperStdOptions
+  , filterVerbosity, options, parseStdOptions, parseSuperStdOptions, quietitude
+  , verbosity, verbosityLevel )
 where
 
 import Prelude  ( (-), maxBound, minBound, pred, succ )
@@ -32,7 +32,6 @@ import Fluffy.Foldable  ( length )
 
 -- lens --------------------------------
 
-import Control.Lens.Getter  ( view )
 import Control.Lens.Lens    ( Lens', lens )
 
 -- log-plus ----------------------------
@@ -86,11 +85,13 @@ class HasStdOptions α where
 instance HasStdOptions StdOptions where
   stdOptions = id
 
-verbosity ∷ Lens' StdOptions ℕ
-verbosity = lens _verbosity (\ s v → s { _verbosity = v })
+class HasVerbosity α where
+  verbosity ∷ Lens' α ℕ
+  quietitude ∷ Lens' α ℕ
 
-quietitude ∷ Lens' StdOptions ℕ
-quietitude = lens _quietitude (\ s q → s { _quietitude = q })
+instance HasVerbosity StdOptions where
+  verbosity = lens _verbosity (\ s v → s { _verbosity = v })
+  quietitude = lens _quietitude (\ s q → s { _quietitude = q })
 
 class HasDryRun α where
   dryRun ∷ Lens' α DoMock
@@ -107,11 +108,25 @@ parseStdOptions = StdOptions ⊳ (length ⊳ many (flag' () (short 'v')))
                              ⊵ (flag NoMock DoMock (short 'n' ⊕ long "dry-run"
                                                               ⊕ help "dry run"))
 
+data SuperStdOptions α = SuperStdOptions { _a ∷ α, _s ∷ StdOptions }
+
+instance HasStdOptions (SuperStdOptions α) where
+  stdOptions = lens _s (\ sso s → sso { _s = s })
+
+instance HasDryRun (SuperStdOptions α) where
+  dryRun = stdOptions ∘ dryRun
+
+options ∷ Lens' (SuperStdOptions α) α
+options = lens _a (\ s a → s { _a = a })
+
+parseSuperStdOptions ∷ Parser α → Parser (SuperStdOptions α)
+parseSuperStdOptions p = SuperStdOptions ⊳ p ⊵ parseStdOptions
+
 ----------------------------------------
 
-verbosityLevel ∷ (HasStdOptions σ, AsUsageError ε, MonadError ε η) ⇒
+verbosityLevel ∷ (HasVerbosity σ, AsUsageError ε, MonadError ε η) ⇒
                  σ → η Severity
-verbosityLevel (view stdOptions → opts) =
+verbosityLevel opts =
   let v = opts ⊣ verbosity
       q = opts ⊣ quietitude
       warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
@@ -129,9 +144,10 @@ verbosityLevel (view stdOptions → opts) =
 
 ----------------------------------------
 
-filterVerbosity ∷ ∀ ε η υ ω α .
-                  (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ) ⇒
-                  StdOptions → η (LoggingT (Log ω) υ α → υ α)
+filterVerbosity ∷ ∀ ε η υ ω α σ .
+                  (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ,
+                  HasVerbosity σ, HasDryRun σ) ⇒
+                  σ → η (LoggingT (Log ω) υ α → υ α)
 filterVerbosity stdOpts =
   verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)
 
