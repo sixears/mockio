@@ -4,9 +4,11 @@
 
 -- Move/Factor StdOptions into own file
 module StdMain.StdOptions
-  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), StdOptions, SuperStdOptions
+  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), HasVerbosity( verbosity )
+  , StdOptions, SuperStdOptions
   , filterVerbosity, options, parseStdOptions, parseSuperStdOptions, quietitude
-  , verbosity, verbosityLevel )
+  , verbosityLevel
+  )
 where
 
 import Prelude  ( (-), maxBound, minBound, pred, succ )
@@ -116,6 +118,10 @@ instance HasStdOptions (SuperStdOptions α) where
 instance HasDryRun (SuperStdOptions α) where
   dryRun = stdOptions ∘ dryRun
 
+instance HasVerbosity (SuperStdOptions α) where
+  verbosity  = stdOptions ∘ verbosity
+  quietitude = stdOptions ∘ quietitude
+
 options ∷ Lens' (SuperStdOptions α) α
 options = lens _a (\ s a → s { _a = a })
 
@@ -146,7 +152,7 @@ verbosityLevel opts =
 
 filterVerbosity ∷ ∀ ε η υ ω α σ .
                   (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ,
-                  HasVerbosity σ, HasDryRun σ) ⇒
+                  HasVerbosity σ) ⇒
                   σ → η (LoggingT (Log ω) υ α → υ α)
 filterVerbosity stdOpts =
   verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)

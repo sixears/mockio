@@ -15,10 +15,6 @@ import Data.Function           ( ($) )
 import Data.Maybe              ( Maybe( Nothing ) )
 import System.IO               ( IO )
 
--- base-unicode-symbols ----------------
-
-import Data.Monoid.Unicode  ( (⊕) )
-
 -- data-textual ------------------------
 
 import Data.Textual  ( Printable )
@@ -36,10 +32,13 @@ import Log  ( CSOpt( NoCallStack ), Log, logToStderr )
 
 import Control.Monad.Log  ( LoggingT )
 
+-- mockio ------------------------------
+
+import MockIO  ( DoMock )
+
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (⊴) )
-import Data.MoreUnicode.Lens         ( (⊣) )
+import Data.MoreUnicode.Lens  ( (⊣) )
 
 -- mtl ---------------------------------
 
@@ -47,19 +46,22 @@ import Control.Monad.Except  ( ExceptT )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser
-                            , execParser, fullDesc, helper, info, progDesc )
+import Options.Applicative  ( Parser )
 
 -- optparse-plus -----------------------
 
 import OptParsePlus  ( parseOpts )
 
+-- text --------------------------------
+
+import Data.Text  ( Text )
+
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.StdOptions  ( StdOptions, SuperStdOptions
-                           , filterVerbosity, parseSuperStdOptions, stdOptions )
+import StdMain.StdOptions  ( HasDryRun( dryRun ), HasVerbosity
+                           , filterVerbosity, options, parseSuperStdOptions )
 import StdMain.UsageError  ( AsUsageError )
 
 --------------------------------------------------------------------------------
@@ -77,26 +79,19 @@ import StdMain.UsageError  ( AsUsageError )
      though quite honestly, I couldn't say why the double `Logging`.
  -}
 
-doMain ∷ ∀ ε ω σ μ .
-          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
-          StdOptions → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) σ
-        → μ ()
+doMain ∷ ∀ ε σ ω α μ .
+         (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, HasVerbosity σ,
+          ToExitCode α) ⇒
+         σ → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) α → μ ()
 doMain o io = Exited.doMain $ do
   filt ← filterVerbosity o
   logToStderr NoCallStack (filt io)
 
-
-yy ∷ ∀ ε α σ ω .
-     (Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
-     Parser α
-   → (SuperStdOptions α → LoggingT (Log ω) (LoggingT (Log ω)
-                                                     (ExceptT ε IO)) σ)
-   → IO ()
-yy p io = do
-  let -- opts = info (parseSuperStdOptions p ⊴ helper) (fullDesc ⊕ desc)
-      desc = "simple 'head' re-implementation to test MockIO"
---  o ← execParser opts
+yy ∷ ∀ ε α σ ω μ .
+     (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
+     Text → Parser α → (DoMock → α → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) σ) → μ ()
+yy desc p io = do
   o ← parseOpts Nothing desc (parseSuperStdOptions p)
-  doMain (o ⊣ stdOptions) (io o)
+  doMain o (io (o ⊣ dryRun) (o ⊣ options))
 
 -- that's all, folks! ----------------------------------------------------------

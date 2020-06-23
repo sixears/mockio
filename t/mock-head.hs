@@ -24,11 +24,6 @@ import System.IO               ( IO, IOMode( WriteMode )
 
 import Data.Eq.Unicode        ( (≢) )
 import Data.Function.Unicode  ( (∘) )
-import Data.Monoid.Unicode    ( (⊕) )
-
--- lens --------------------------------
-
-import Control.Lens.Lens  ( lens )
 
 -- log-plus ----------------------------
 
@@ -44,25 +39,19 @@ import Control.Monad.Except  ( MonadError )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (⊴), (⊵) )
+import Data.MoreUnicode.Applicative  ( (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
-import Data.MoreUnicode.Lens         ( (⊣) )
 import Data.MoreUnicode.Monoid       ( ю )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, execParser, fullDesc, help
-                            , helper, info, long, metavar, progDesc, short
-                            , strArgument, strOption
-                            )
+import Options.Applicative  ( Parser, help, long, metavar, short
+                            , strArgument, strOption )
 
 -- std-main ----------------------------
 
-import StdMain             ( doMain, yy )
-import StdMain.StdOptions  ( HasDryRun( dryRun ), HasStdOptions( stdOptions )
-                           , StdOptions, SuperStdOptions
-                           , options, parseStdOptions )
+import StdMain             ( yy )
 import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
 
 -- text --------------------------------
@@ -117,34 +106,31 @@ main = do -- XXX Tidy This Up
           -- XXX Add CallStack Options
           -- XXX More verbose options, incl. file,level
           -- XXX stdMain that uses Options+StdOptions object
-          -- XXX use optparse-plus parseOpts 
-          -- XXX pass dryRun to io
---          o ← execParser opts
---          doMain @UsageError (o ⊣ stdOptions) (xx o)
-          yy @UsageError parseOptions xx
-       where desc   = progDesc "simple 'head' re-implementation to test MockIO"
-             opts   = info (parseOptions ⊴ helper) (fullDesc ⊕ desc)
+          -- XXX Eliminate SuperStdOptions (at least, export of)
+          -- XXX compress main, xx
+          -- XXX Compress doMain, yy in StdMain
+          yy @UsageError desc parseOptions xx
+       where desc = "simple 'head' re-implementation to test MockIO"
 
 xx ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
-     SuperStdOptions Options → μ ()
-xx opts = do
-  let fn      = fileName (opts ⊣ options)
-      dry_run = opts ⊣ dryRun
+     DoMock → Options → μ ()
+xx mock opts = do
+  let fn      = fileName opts
   when False (throwUsage "fake error")
-  fh ← case writeFileName (opts ⊣ options) of
+  fh ← case writeFileName opts of
          Nothing  → return stdout
          Just wfn → do
                   let logmsg DoMock = [fmtT|(write %t)|] wfn
                       logmsg NoMock = [fmtT|write %t|] wfn
                   mkIO' Notice IOWrite logmsg
                                 (openFile "/dev/null" WriteMode)
-                                (openFile (unpack wfn) WriteMode) dry_run
-                      
+                                (openFile (unpack wfn) WriteMode) mock
+
   txt ← mkIO Informational IORead ([fmtT|read %t|] fn) "mock text"
              (readFile (unpack fn)) NoMock
   liftIO $ forM_ (take 10 (lines txt)) (hPutStrLn fh)
   when (fh ≢ stdout) $ liftIO (hClose fh)
   return ()
 
-  
+
 -- that's all, folks! ----------------------------------------------------------
