@@ -51,8 +51,8 @@ import Options.Applicative  ( Parser, help, long, metavar, short
 
 -- std-main ----------------------------
 
-import StdMain             ( yy )
-import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage )
+import StdMain             ( stdMain' )
+import StdMain.UsageError  ( AsUsageError, throwUsage )
 
 -- text --------------------------------
 
@@ -101,16 +101,14 @@ fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
 fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 
 main ∷ IO ()
-main = do -- XXX Tidy This Up
-          -- XXX UsageError
-          -- XXX Add CallStack Options
-          -- XXX More verbose options, incl. file,level
-          -- XXX stdMain that uses Options+StdOptions object
-          -- XXX Eliminate SuperStdOptions (at least, export of)
-          -- XXX compress main, xx
-          -- XXX Compress doMain, yy in StdMain
-          yy @UsageError desc parseOptions xx
-       where desc = "simple 'head' re-implementation to test MockIO"
+main = -- XXX Tidy This Up
+       -- XXX UsageError
+       -- XXX Add CallStack Options
+       -- XXX More verbose options, incl. file,level
+       -- XXX stdMain that uses Options+StdOptions object
+       -- XXX compress main, xx
+       -- XXX check XXX in StdMain
+       stdMain' "simple 'head' re-implementation to test MockIO" parseOptions xx
 
 xx ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
      DoMock → Options → μ ()

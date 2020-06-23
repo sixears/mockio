@@ -2,11 +2,9 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 {-# LANGUAGE RankNTypes        #-}
 
--- Move/Factor StdOptions into own file
 module StdMain.StdOptions
-  ( HasDryRun( dryRun ), HasStdOptions( stdOptions ), HasVerbosity( verbosity )
-  , StdOptions, SuperStdOptions
-  , filterVerbosity, options, parseStdOptions, parseSuperStdOptions, quietitude
+  ( HasDryRun( dryRun ), HasVerbosity( verbosity ), StdOptions
+  , filterVerbosity, options, parseBaseOptions, parseStdOptions, quietitude
   , verbosityLevel
   )
 where
@@ -26,7 +24,6 @@ import Data.Ord             ( (>) )
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Ord.Unicode       ( (≤) )
-import Data.Monoid.Unicode    ( (⊕) )
 
 -- fluffy ------------------------------
 
@@ -54,6 +51,7 @@ import Data.MoreUnicode.Applicative  ( (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
 import Data.MoreUnicode.Lens         ( (⊣) )
 import Data.MoreUnicode.Monad        ( (≫) )
+import Data.MoreUnicode.Monoid       ( ю )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- mtl ---------------------------------
@@ -76,22 +74,22 @@ import StdMain.UsageError  ( AsUsageError, throwUsage )
 
 --------------------------------------------------------------------------------
 
-data StdOptions = StdOptions { _verbosity  ∷ ℕ
-                             , _quietitude ∷ ℕ
-                             , _dryRun     ∷ DoMock
-                             }
+data BaseOptions = BaseOptions { _verbosity  ∷ ℕ
+                               , _quietitude ∷ ℕ
+                               , _dryRun     ∷ DoMock
+                               }
 
-class HasStdOptions α where
-  stdOptions ∷ Lens' α StdOptions
+class HasBaseOptions α where
+  stdOptions ∷ Lens' α BaseOptions
 
-instance HasStdOptions StdOptions where
+instance HasBaseOptions BaseOptions where
   stdOptions = id
 
 class HasVerbosity α where
   verbosity ∷ Lens' α ℕ
   quietitude ∷ Lens' α ℕ
 
-instance HasVerbosity StdOptions where
+instance HasVerbosity BaseOptions where
   verbosity = lens _verbosity (\ s v → s { _verbosity = v })
   quietitude = lens _quietitude (\ s q → s { _quietitude = q })
 
@@ -101,32 +99,33 @@ class HasDryRun α where
 instance HasDryRun DoMock where
   dryRun = id
 
-instance HasDryRun StdOptions where
+instance HasDryRun BaseOptions where
   dryRun = lens _dryRun (\ s d → s { _dryRun = d })
 
-parseStdOptions ∷ Parser StdOptions
-parseStdOptions = StdOptions ⊳ (length ⊳ many (flag' () (short 'v')))
-                             ⊵ (length ⊳ many (flag' () (long "quiet")))
-                             ⊵ (flag NoMock DoMock (short 'n' ⊕ long "dry-run"
-                                                              ⊕ help "dry run"))
+parseBaseOptions ∷ Parser BaseOptions
+parseBaseOptions = BaseOptions ⊳ (length ⊳ many (flag' () (short 'v')))
+                               ⊵ (length ⊳ many (flag' () (long "quiet")))
+                               ⊵ (flag NoMock DoMock (ю [ short 'n'
+                                                        , long "dry-run"
+                                                        , help "dry run" ]))
 
-data SuperStdOptions α = SuperStdOptions { _a ∷ α, _s ∷ StdOptions }
+data StdOptions α = StdOptions { _a ∷ α, _s ∷ BaseOptions }
 
-instance HasStdOptions (SuperStdOptions α) where
+instance HasBaseOptions (StdOptions α) where
   stdOptions = lens _s (\ sso s → sso { _s = s })
 
-instance HasDryRun (SuperStdOptions α) where
+instance HasDryRun (StdOptions α) where
   dryRun = stdOptions ∘ dryRun
 
-instance HasVerbosity (SuperStdOptions α) where
+instance HasVerbosity (StdOptions α) where
   verbosity  = stdOptions ∘ verbosity
   quietitude = stdOptions ∘ quietitude
 
-options ∷ Lens' (SuperStdOptions α) α
+options ∷ Lens' (StdOptions α) α
 options = lens _a (\ s a → s { _a = a })
 
-parseSuperStdOptions ∷ Parser α → Parser (SuperStdOptions α)
-parseSuperStdOptions p = SuperStdOptions ⊳ p ⊵ parseStdOptions
+parseStdOptions ∷ Parser α → Parser (StdOptions α)
+parseStdOptions p = StdOptions ⊳ p ⊵ parseBaseOptions
 
 ----------------------------------------
 
