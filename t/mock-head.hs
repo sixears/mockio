@@ -104,15 +104,14 @@ main ∷ IO ()
 main = -- XXX Tidy This Up
        -- XXX UsageError
        -- XXX Add CallStack Options
-       -- XXX More verbose options, incl. file,level
-       -- XXX stdMain that uses Options+StdOptions object
+       -- XXX More verbose options, incl. file,level,callstack,ioclass
+       -- verbose=[3|WARNING|wARn]:{@callstack/ioread}:/
        -- XXX compress main, xx
-       -- XXX check XXX in StdMain
-       stdMain' "simple 'head' re-implementation to test MockIO" parseOptions xx
+       stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
-xx ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
+go ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
      DoMock → Options → μ ()
-xx mock opts = do
+go mock opts = do
   let fn      = fileName opts
   when False (throwUsage "fake error")
   fh ← case writeFileName opts of

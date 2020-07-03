@@ -1,19 +1,22 @@
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module StdMain.UsageError
-  ( AsUsageError( _UsageError ), UsageError, throwUsage )
+  ( AsUsageError( _UsageError ), UsageError
+  , throwUsage, usageError )
 where
 
 -- base --------------------------------
 
 import Control.Exception  ( Exception )
+import Data.Eq            ( Eq )
 import Data.Function      ( ($), id )
 import Text.Show          ( Show )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ) )
+import Data.Textual  ( Printable( print ), toText )
 
 -- lens --------------------------------
 
@@ -35,7 +38,7 @@ import qualified  Text.Printer  as  P
 --------------------------------------------------------------------------------
 
 data UsageError = UsageError Text
-  deriving Show
+  deriving (Eq,Show)
 
 instance Exception UsageError
 
@@ -48,10 +51,10 @@ instance AsUsageError UsageError where
 instance Printable UsageError where
   print (UsageError txt) = P.text txt
 
-usageError ∷ AsUsageError ε ⇒ Text → ε
-usageError t = _UsageError # UsageError t
+usageError ∷ ∀ τ ε . (AsUsageError ε, Printable τ) ⇒ τ → ε
+usageError t = _UsageError # UsageError (toText t)
 
-throwUsage ∷ (AsUsageError ε, MonadError ε η) ⇒ Text → η ω
+throwUsage ∷ ∀ τ ε ω η . (Printable τ, AsUsageError ε, MonadError ε η) ⇒ τ → η ω
 throwUsage t = throwError $ usageError t
 
 -- that's all, folks! ----------------------------------------------------------

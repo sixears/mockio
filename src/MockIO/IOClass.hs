@@ -1,17 +1,31 @@
 {-# LANGUAGE UnicodeSyntax #-}
+{-# LANGUAGE ViewPatterns  #-}
 
 module MockIO.IOClass
-  ( HasIOClass( ioClass ), IOClass(..), isExternalIO, isInternalIO )
+  ( HasIOClass( ioClass ), IOClass(..), ioClasses, isExternalIO, isInternalIO )
 where
+
+-- base --------------------------------
+
+import Data.Char  ( toLower )
+import Text.Read  ( Read( readsPrec ) )
 
 -- base-unicode-symbols ----------------
 
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 
+-- containers --------------------------
+
+import qualified Data.Set  as  Set
+
 -- data-default ------------------------
 
 import Data.Default  ( Default( def ) )
+
+-- data-textual ------------------------
+
+import Data.Textual  ( Printable( print ) )
 
 -- lens --------------------------------
 
@@ -26,6 +40,10 @@ import Data.MoreUnicode.Lens  ( (⊣) )
 
 import TastyPlus.Equish  ( Equish( (≃) ) )
 
+-- text-printer ------------------------
+
+import qualified  Text.Printer  as  P
+
 --------------------------------------------------------------------------------
 
 data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
@@ -38,10 +56,28 @@ data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
                        --   that may alter state.
              | IOExec  -- ^ An exec (replaces this executable).
              | NoIO    -- ^ No IO.
-  deriving (Eq,Show)
+  -- ordering is not relevant, we just derive it to support Set
+  deriving (Eq,Ord,Show)
+
+ioClasses ∷ Set.Set IOClass
+ioClasses = Set.fromList [ IORead, IOWrite, IOCmdR, IOCmdW, IOExec, NoIO ]
+
+instance Read IOClass where
+  readsPrec _ (fmap toLower → "ioread")      = [(IORead  ,"")]
+  readsPrec _ (fmap toLower → "iowrite")     = [(IOWrite ,"")]
+  readsPrec _ (fmap toLower → "iocmdr")      = [(IOCmdR  ,"")]
+  readsPrec _ (fmap toLower → "iocmdread")   = [(IOCmdR  ,"")]
+  readsPrec _ (fmap toLower → "iocmdw")      = [(IOCmdW  ,"")]
+  readsPrec _ (fmap toLower → "iocmdwrite")  = [(IOCmdW  ,"")]
+  readsPrec _ (fmap toLower → "ioexec")      = [(IOExec  ,"")]
+  readsPrec _ (fmap toLower → "noio")        = [(NoIO    ,"")]
+  readsPrec _ _                              = []
 
 instance Default IOClass where
   def = NoIO
+
+instance Printable IOClass where
+  print = P.string ∘ show
 
 instance Equish IOClass where
   i ≃ i' = i ≡ i'

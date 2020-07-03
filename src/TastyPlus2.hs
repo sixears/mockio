@@ -32,15 +32,15 @@ import Data.Monoid.Unicode    ( (⊕) )
 
 import Data.Textual  ( Printable, toString, toText )
 
--- fluffy ------------------------------
-
-import Fluffy.Foldable  ( length )
-
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Monad    ( (≫) )
+
+-- natural-plus ------------------------
+
+import Natural  ( length )
 
 -- safe --------------------------------
 
