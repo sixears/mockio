@@ -13,7 +13,6 @@ import qualified  GHC.Enum
 import Control.Applicative     ( optional )
 import Control.Monad           ( forM_, return, when )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
-import Data.Bool               ( Bool( False ) )
 import Data.Function           ( ($) )
 import Data.List               ( take )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
@@ -52,7 +51,7 @@ import Options.Applicative  ( Parser, help, long, metavar, short
 -- std-main ----------------------------
 
 import StdMain             ( stdMain' )
-import StdMain.UsageError  ( AsUsageError, throwUsage )
+import StdMain.UsageError  ( AsUsageError )
 
 -- text --------------------------------
 
@@ -113,7 +112,6 @@ go ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε
      DoMock → Options → μ ()
 go mock opts = do
   let fn      = fileName opts
-  when False (throwUsage "fake error")
   fh ← case writeFileName opts of
          Nothing  → return stdout
          Just wfn → do

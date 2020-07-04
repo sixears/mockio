@@ -8,7 +8,6 @@ where
 -- base --------------------------------
 
 import Data.Char  ( toLower )
-import Text.Read  ( Read( readsPrec ) )
 
 -- base-unicode-symbols ----------------
 

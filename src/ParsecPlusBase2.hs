@@ -9,18 +9,11 @@ where
 
 -- base --------------------------------
 
-import Control.Applicative    ( many, pure )
-import Control.Monad          ( return )
+import Control.Applicative    ( many )
 import Data.Bifunctor         ( first )
-import Data.Char              ( Char )
-import Data.Either            ( Either( Left, Right ), either )
-import Data.Function          ( ($), id )
 import Data.Functor.Identity  ( Identity )
 import Data.List              ( isPrefixOf )
-import Data.Monoid            ( mappend )
-import Data.String            ( String )
 import Data.Word              ( Word8 )
-import Text.Read              ( read )
 
 -- base-unicode-symbols ----------------
 

@@ -4,19 +4,13 @@
 
 {- | Add simple file-handling on top of Base Parsecable class -}
 module ParsecPlus2
-  ( AsParseError(..), IOParseError, Parsecable(..), ParseError
-  , digits, parens, parsecFUTF8, parsecFUTF8L, parsecFileUTF8L, parsecFileUTF8
-  , __parsecN__
+  ( AsParseError(..), Parsecable(..), ParseError
+  , parsecFUTF8, parsecFUTF8L, parsecFileUTF8L, parsecFileUTF8
   , module ParsecPlusBase2
   )
 where
 
 import ParsecPlusBase2
-
--- base --------------------------------
-
-import Data.Maybe   ( Maybe( Just, Nothing ) )
-import Data.String  ( String )
 
 -- fpath -------------------------------
 
@@ -44,7 +38,7 @@ import Control.Monad.Except  ( MonadError )
 
 -- parsec-plus-base --------------------
 
-import Parsec.Error  ( AsParseError( _ParseError ), IOParseError, ParseError )
+import Parsec.Error  ( ParseError )
 
 --------------------------------------------------------------------------------
 

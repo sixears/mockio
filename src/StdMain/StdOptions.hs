@@ -9,55 +9,21 @@ module StdMain.StdOptions
   )
 where
 
-import Debug.Trace  ( trace, traceShow )
-
-import Prelude  ( (-), enumFrom, maxBound, minBound, pred, succ, undefined )
+import Prelude  ( (-), maxBound, minBound, pred, succ )
 
 -- base --------------------------------
 
-import Control.Applicative  ( many, some, pure )
-import Control.Monad        ( Monad, MonadFail, fail, guard, return, sequence )
-import Data.Bifunctor       ( bimap, first )
+import Control.Applicative  ( many )
+import Control.Monad        ( return )
 import Data.Bool            ( Bool( True, False ), otherwise )
-import Data.Char            ( Char, toLower )
-import Data.Either          ( Either( Left, Right ), either )
-import Data.Eq              ( Eq )
-import Data.Function        ( ($), const, flip, id )
-import Data.Functor         ( fmap )
-import Data.List            ( filter, intercalate, isPrefixOf )
-import Data.Maybe           ( Maybe( Just, Nothing ), fromMaybe, isJust, maybe )
-import Data.Ord             ( Ord, (>) )
-import Data.String          ( String )
-import Data.Tuple           ( fst )
-import System.Exit          ( ExitCode )
-import System.IO            ( IO )
-import Text.Read            ( Read, read, readMaybe )
-import Text.Show            ( Show( show ) )
+import Data.Function        ( flip, id )
+import Data.Ord             ( (>) )
 
 -- base-unicode-symbols ----------------
 
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
-import Data.Monoid.Unicode    ( (⊕) )
 import Data.Ord.Unicode       ( (≤) )
-
--- containers --------------------------
-
-import qualified  Data.Set         as  Set
-import qualified  Data.Map.Strict  as  Map
-
-import Data.Map.Strict  ( (!) )
-
--- data-textual ------------------------
-
-import Data.Textual  ( Printable( print ), toString )
-
--- fpath -------------------------------
-
-import FPath.AbsFile    ( AbsFile, absfile )
-import FPath.File       ( File( FileA, FileR ) )
-import FPath.Parseable  ( parse' )
-import FPath.RelFile    ( RelFile, relfile )
 
 -- lens --------------------------------
 
@@ -69,22 +35,15 @@ import Log  ( Log, filterSeverity )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Alert, Emergency
-                                                        , Notice ) )
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Notice ) )
 
 -- mockio ------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ) )
-import MockIO.IOClass  ( IOClass( IOCmdR, IOCmdW, IOWrite ), ioClasses )
-
--- monaderror-io -----------------------
-
-import MonadError2  ( mErrFail )
+import MockIO  ( DoMock( DoMock, NoMock ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∈), (∤), (≫), (⊣), (⊳), (⊵), (⋪), (⋫), (⩺)
-                         , ю, 𝔹, ℕ )
+import Data.MoreUnicode  ( (≫), (⊣), (⊳), (⊵), ю, ℕ )
 
 -- mtl ---------------------------------
 
@@ -92,64 +51,24 @@ import Control.Monad.Except  ( MonadError )
 
 -- natural-plus ------------------------
 
-import Natural  ( toEnum, length )
+import Natural  ( length )
 
 -- optparse-applicative ----------------
 
 import Options.Applicative  ( Parser, flag, flag', help, long, short )
 
--- parsec -----------------------------
-
-import Text.Parsec.Char        ( alphaNum, char, letter, noneOf, oneOf, string )
-import Text.Parsec.Combinator  ( option, optionMaybe, sepBy )
-import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, (<?>), try )
-
--- parsec-plus -------------------------
-
-import ParsecPlus2  ( Parsecable( parser, parsec' ) )
-
--- tasty -------------------------------
-
-import Test.Tasty  ( TestTree, testGroup )
-
--- tasty-hunit -------------------------
-
-import Test.Tasty.HUnit  ( (@=?), assertBool, testCase )
-
--- tasty-plus --------------------------
-
-import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP
-                  , runTestsReplay, runTestTree, withResource' )
-
--- text --------------------------------
-
-import qualified  Data.Text  as  Text
-import Data.Text  ( Text, pack, splitOn, unpack )
-
--- text-printer ------------------------
-
-import qualified  Text.Printer  as  P
-
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt, fmtT )
+import Text.Fmt  ( fmtT )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.UsageError      ( AsUsageError, UsageError
-                               , readUsage, throwUsage, usageError )
-import StdMain.VerboseOptions  ( VerboseOptions )
+import StdMain.UsageError  ( AsUsageError, throwUsage )
 
 --------------------------------------------------------------------------------
 
-
-data LogOptions = LogOptions { _verbosity     ∷ ℕ
-                             , _quietitude    ∷ ℕ
-                             -- lowest passing severity
-                             , _verboseOptions ∷ Maybe VerboseOptions
-                             }
 
 data BaseOptions = BaseOptions { _verbosity_  ∷ ℕ
                                , _quietitude_ ∷ ℕ
@@ -201,8 +120,6 @@ instance HasVerbosity (StdOptions α) where
 
 options ∷ Lens' (StdOptions α) α
 options = lens _a (\ s a → s { _a = a })
-
-severityNames = [(toLower ⊳ show s,s) | s ← enumFrom Emergency]
 
 parseStdOptions ∷ Parser α → Parser (StdOptions α)
 parseStdOptions p = StdOptions ⊳ p ⊵ parseBaseOptions

@@ -8,28 +8,26 @@ module StdMain.VerboseOptions
   ( LogFile, VerboseOptions )
 where
 
-import Prelude  ( enumFrom, undefined )
+import Prelude  ( enumFrom )
 
 -- base --------------------------------
 
-import Control.Applicative  ( many, some, pure )
-import Control.Monad        ( return, sequence )
-import Control.Monad.Fail   ( fail )
-import Data.Bifunctor       ( bimap, first )
-import Data.Char            ( Char, toLower )
-import Data.Either          ( Either )
-import Data.Eq              ( Eq )
-import Data.Function        ( ($) )
-import Data.Functor         ( fmap )
+import Control.Applicative    ( many, some, pure )
+import Control.Monad          ( return, sequence )
+import Data.Bifunctor         ( bimap, first )
+import Data.Char              ( Char, toLower )
+import Data.Either            ( Either )
+import Data.Eq                ( Eq )
+import Data.Function          ( ($) )
+import Data.Functor           ( fmap )
 import Data.Functor.Identity  ( Identity )
-import Data.List            ( filter, intercalate, isPrefixOf )
-import Data.Maybe           ( Maybe( Just, Nothing ), fromMaybe, isJust, maybe )
-import Data.String          ( String )
-import Data.Tuple           ( fst )
-import System.Exit          ( ExitCode )
-import System.IO            ( IO )
-import Text.Read            ( Read, read, readMaybe )
-import Text.Show            ( Show( show ) )
+import Data.List              ( intercalate )
+import Data.Maybe             ( Maybe( Just, Nothing ), fromMaybe )
+import Data.String            ( String )
+import System.Exit            ( ExitCode )
+import System.IO              ( IO )
+import Text.Read              ( read )
+import Text.Show              ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
@@ -45,23 +43,21 @@ import Data.Map.Strict  ( (!) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ), toString )
+import Data.Textual  ( Printable( print ) )
 
 -- fpath -------------------------------
 
-import FPath.AbsFile    ( AbsFile, absfile )
+import FPath.AbsFile    ( absfile )
 import FPath.File       ( File( FileA, FileR ) )
 import FPath.Parseable  ( parse' )
-import FPath.RelFile    ( RelFile, relfile )
+import FPath.RelFile    ( relfile )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Alert, Emergency
-                                                        , Notice ) )
+import Control.Monad.Log  ( Severity( Alert, Emergency ) )
 
 -- mockio ------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ) )
 import MockIO.IOClass  ( IOClass( IOCmdR, IOCmdW, IOWrite ), ioClasses )
 
 -- monaderror-io -----------------------
@@ -70,8 +66,7 @@ import MonadError2  ( mErrFail )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∈), (∤), (≫), (⊣), (⊳), (⊵), (⋪), (⋫), (⩺)
-                         , ю, 𝔹, ℕ )
+import Data.MoreUnicode  ( (∈), (∤), (≫), (⊳), (⊵), (⋪), (⋫), ℕ )
 
 -- mtl ---------------------------------
 
@@ -79,13 +74,13 @@ import Control.Monad.Except  ( MonadError )
 
 -- natural-plus ------------------------
 
-import Natural  ( toEnum, length )
+import Natural  ( toEnum )
 
 -- parsec -----------------------------
 
-import Text.Parsec.Char        ( alphaNum, char, letter, noneOf, oneOf, string )
+import Text.Parsec.Char        ( alphaNum, char, letter, noneOf, oneOf )
 import Text.Parsec.Combinator  ( between, option, optionMaybe, sepBy )
-import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, (<?>), try )
+import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, try )
 
 -- parsec-plus -------------------------
 
@@ -97,12 +92,12 @@ import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( (@=?), assertBool, testCase )
+import Test.Tasty.HUnit  ( (@=?), testCase )
 
 -- tasty-plus --------------------------
 
-import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP
-                  , runTestsReplay, runTestTree, withResource' )
+import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP, runTestsReplay
+                  , runTestTree )
 
 -- text --------------------------------
 
@@ -121,7 +116,7 @@ import Text.Fmt  ( fmt, fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.UsageError  ( AsUsageError, UsageError, readUsage, throwUsage, usageError )
+import StdMain.UsageError  ( AsUsageError, UsageError, readUsage, throwUsage )
 
 --------------------------------------------------------------------------------
 
@@ -152,7 +147,7 @@ instance Printable VerboseOptions where
   -- just for easier visibility during debugging
   print (VerboseOptions sev ioclasses cfg Nothing) =
     P.text $ [fmt|%w-[%L]-[%L]|] sev ioclasses cfg
-  print v@(VerboseOptions sev ioclasses cfg (Just logfile)) =
+  print (VerboseOptions sev ioclasses cfg (Just logfile)) =
     P.text $ [fmt|%w-[%L]-[%w]-%T|] sev ioclasses cfg logfile
 
 type CfgsParse = (Maybe (IOClassSet), TextMap)
@@ -174,11 +169,11 @@ parseCfgs__ (iocs,cfg) ((Text.toLower → k,v) : more) =
         "ioclass"   → ioclasses
         "ioclasses" → ioclasses
         _           → if k ∈ cfg
-                      then throwUsage $ e_config_defined cfg k v
+                      then throwUsage $ e_config_defined
                       else parseCfgs__ (iocs,Map.insert k v cfg) more
-  where e_iocs_defined   iocs_   = [fmtT|IOClasses already defined: ⟨%L⟩|] iocs_
-        e_config_defined cfg k v = [fmtT|config %t already defined: '%t' (%t)|]
-                                   k (cfg ! k) v
+  where e_iocs_defined   iocs_ = [fmtT|IOClasses already defined: ⟨%L⟩|] iocs_
+        e_config_defined       = [fmtT|config %t already defined: '%t' (%t)|]
+                                 k (cfg ! k) v
 ----------
 
 parseCfgsTests ∷ TestTree

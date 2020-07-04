@@ -14,7 +14,7 @@ import Control.Monad      ( return )
 import Data.Eq            ( Eq )
 import Data.Function      ( ($), id )
 import Data.Maybe         ( maybe )
-import Text.Read          ( Read, read, readMaybe )
+import Text.Read          ( Read, readMaybe )
 import Text.Show          ( Show )
 
 -- data-textual ------------------------
@@ -40,7 +40,7 @@ import qualified  Text.Printer  as  P
 
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt, fmtT )
+import Text.Fmt  ( fmtT )
 
 --------------------------------------------------------------------------------
 
