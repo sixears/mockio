@@ -4,19 +4,22 @@
 
 module StdMain.UsageError
   ( AsUsageError( _UsageError ), UsageError
-  , throwUsage, usageError )
+  , readUsage, throwUsage, usageError )
 where
 
 -- base --------------------------------
 
 import Control.Exception  ( Exception )
+import Control.Monad      ( return )
 import Data.Eq            ( Eq )
 import Data.Function      ( ($), id )
+import Data.Maybe         ( maybe )
+import Text.Read          ( Read, read, readMaybe )
 import Text.Show          ( Show )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ), toText )
+import Data.Textual  ( Printable( print ), toString, toText )
 
 -- lens --------------------------------
 
@@ -35,6 +38,10 @@ import Data.Text  ( Text )
 
 import qualified  Text.Printer  as  P
 
+-- tfmt --------------------------------
+
+import Text.Fmt  ( fmt, fmtT )
+
 --------------------------------------------------------------------------------
 
 data UsageError = UsageError Text
@@ -42,19 +49,36 @@ data UsageError = UsageError Text
 
 instance Exception UsageError
 
+----------------------------------------
+
 class AsUsageError ε where
   _UsageError ∷ Prism' ε UsageError
+
+--------------------
 
 instance AsUsageError UsageError where
   _UsageError = id
 
+--------------------
+
 instance Printable UsageError where
   print (UsageError txt) = P.text txt
+
+------------------------------------------------------------
 
 usageError ∷ ∀ τ ε . (AsUsageError ε, Printable τ) ⇒ τ → ε
 usageError t = _UsageError # UsageError (toText t)
 
+----------------------------------------
+
 throwUsage ∷ ∀ τ ε ω η . (Printable τ, AsUsageError ε, MonadError ε η) ⇒ τ → η ω
 throwUsage t = throwError $ usageError t
+
+----------------------------------------
+
+readUsage ∷ ∀ τ ε ω η . (AsUsageError ε, MonadError ε η, Read ω, Printable τ) ⇒
+            τ → η ω
+readUsage s = let errMsg = [fmtT|failed to parse: '%T'|] s
+               in maybe (throwUsage $ errMsg) return (readMaybe $ toString s)
 
 -- that's all, folks! ----------------------------------------------------------

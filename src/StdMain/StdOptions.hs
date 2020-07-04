@@ -1,8 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NoImplicitPrelude          #-}
 {-# LANGUAGE UnicodeSyntax              #-}
 {-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE ViewPatterns               #-}
 
 module StdMain.StdOptions
   ( HasDryRun( dryRun ), HasVerbosity( verbosity ), StdOptions
@@ -85,13 +83,8 @@ import MonadError2  ( mErrFail )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (∤), (⊵), (⋪), (⋫) )
-import Data.MoreUnicode.Bool         ( 𝔹 )
-import Data.MoreUnicode.Functor      ( (⊳), (⩺) )
-import Data.MoreUnicode.Lens         ( (⊣) )
-import Data.MoreUnicode.Monad        ( (≫) )
-import Data.MoreUnicode.Monoid       ( ю )
-import Data.MoreUnicode.Natural      ( ℕ )
+import Data.MoreUnicode  ( (∈), (∤), (≫), (⊣), (⊳), (⊵), (⋪), (⋫), (⩺)
+                         , ю, 𝔹, ℕ )
 
 -- mtl ---------------------------------
 
@@ -113,7 +106,7 @@ import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, (<?>), try )
 
 -- parsec-plus -------------------------
 
-import ParsecPlus2( Parsecable( parser, parsec' ) )
+import ParsecPlus2  ( Parsecable( parser, parsec' ) )
 
 -- tasty -------------------------------
 
@@ -145,142 +138,12 @@ import Text.Fmt  ( fmt, fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.UsageError  ( AsUsageError, UsageError, throwUsage, usageError )
+import StdMain.UsageError      ( AsUsageError, UsageError
+                               , readUsage, throwUsage, usageError )
+import StdMain.VerboseOptions  ( VerboseOptions )
 
 --------------------------------------------------------------------------------
 
-data VerboseOptions =
-  VerboseOptions { _logSeverity   ∷ Severity -- ^ lowest passing severity
-                 , _ioClassFilter ∷ Set.Set IOClass
-                 , _config        ∷ Map.Map Text Text
-                 , _logFile       ∷ Maybe LogFile
-                 }
-  deriving (Eq,Show)
-
-instance Printable VerboseOptions where
-  print (VerboseOptions sev ioclasses cfg Nothing) =
-    P.text $ [fmt|%w-[%L]-[%L]|] sev ioclasses cfg
-  print v@(VerboseOptions sev ioclasses cfg (Just logfile)) =
-    P.text $ [fmt|%w-[%L]-[%w]-%T|] sev ioclasses cfg logfile
-
-(∈) ∷ ∀ κ α . Ord κ ⇒ κ → Map.Map κ α → 𝔹
-(∈) = Map.member
-
-readUsage ∷ ∀ τ ε ω η . (AsUsageError ε, MonadError ε η, Read ω, Printable τ) ⇒
-            τ → η ω
-readUsage s = let errMsg = [fmtT|failed to parse: '%T'|] s
-               in maybe (throwUsage $ errMsg) return (readMaybe $ toString s)
-
-parseKV ∷ Stream σ η Char ⇒ ParsecT σ τ η (Text,Text)
-parseKV = bimap pack pack ⊳ ((,) ⊳ some (alphaNum ∤ oneOf "_-") ⋪ char '=' ⊵ many (alphaNum ∤ oneOf "_-") )
-
-parseCfgs  ∷ [(Text,Text)] → ParsecT σ τ η (Set.Set IOClass, Map.Map Text Text)
-parseCfgs = mErrFail ∘ fmap (first $ fromMaybe ioClasses) ∘ parseCfgs_
-
-type CfgsParse = (Maybe (Set.Set IOClass), Map.Map Text Text)
-
-parseCfgs_ ∷ [(Text,Text)] → Either UsageError CfgsParse
-parseCfgs_ = parseCfgs__ (Nothing,Map.empty)
-
--- recursively parse a set of config pairs
-parseCfgs__ ∷ (AsUsageError ε, MonadError ε η) ⇒
-              CfgsParse → [(Text,Text)] → η CfgsParse
-parseCfgs__ (iocs,cfg) [] = return (iocs,cfg)
-parseCfgs__ (iocs,cfg) ((Text.toLower → k,v) : more) =
-  case k of
-    -- duplicate of ioclasses
-    "ioclass"   → case iocs of
-                    Nothing    → do let class_txts = splitOn "," v
-                                    classes ← sequence $ readUsage ⊳ class_txts
-                                    let iocs' = Just $ Set.fromList classes
-                                    parseCfgs__ (iocs', cfg) more
-                    Just iocs_ →  throwUsage $ e_iocs_defined iocs_
-    -- duplicate of ioclass
-    "ioclasses" → case iocs of
-                    Nothing    → do let class_txts = splitOn "," v
-                                    classes ← sequence $ readUsage ⊳ class_txts
-                                    let iocs' = Just $ Set.fromList classes
-                                    parseCfgs__ (iocs', cfg) more
-                    Just iocs_ →  throwUsage $ e_iocs_defined iocs_
-    _           → if k ∈ cfg
-                  then throwUsage $ e_config_defined cfg k v
-                  else parseCfgs__ (iocs,Map.insert k v cfg) more
-  where e_iocs_defined   iocs_   = [fmtT|IOClasses already defined: ⟨%L⟩|] iocs_
-        e_config_defined cfg k v = [fmtT|config %t already defined: '%t' (%t)|]
-                                   k (cfg ! k) v
-  
-parseCfgsTests ∷ TestTree
-parseCfgsTests =
-  let test name exp (input_texts, input_values) =
-        testCase name $
-          assertRight (exp @=?)(parseCfgs__ @UsageError input_values input_texts)
-      testErr name (input_texts, input_values) =
-        testCase name $
-          assertIsLeft (parseCfgs__ @UsageError input_values input_texts)
-      iocsText = pack $ intercalate "," (show ⊳ Set.toList ioClasses)
-   in testGroup "parseCfgs"
-            [ test "empty" (Just ioClasses,Map.empty)
-                           ([], (Just ioClasses,Map.empty))
-            , test "just one ioclass"
-                   (Just $ Set.fromList [IOCmdW],Map.empty)
-                   ([("ioClasses", "IOCmdW")],
-                   (Nothing,Map.empty))
-            , test "just ioclasses"
-                   (Just ioClasses,Map.empty)
-                   ([("ioClasses", iocsText)], (Nothing,Map.empty))
-            , testErr "more ioclasses"
-                      ([("ioClasses", iocsText)], (Just Set.empty,Map.empty))
-            , test "foobar"
-                   (Nothing,Map.fromList [("foo","bar")])
-                   ([("foo","bar")], (Nothing,Map.empty))
-            , testErr "foobar again"
-                      ([("foo","bar")], (Nothing,Map.fromList [("foo","baz")]))
-            , test "ioclasses + config"
-                   (Just $ Set.fromList [IOCmdW,IOCmdR],
-                    Map.fromList [("foo","bar"),("baz","quux")])
-                   ([ ("foo","bar")
-                    , ("ioclasses","IOCmdWrite,IOCmdR")
-                    , ("baz","quux") ], (Nothing,Map.empty))
-            ]
-
-parseIOClassesCfg ∷ Stream σ η Char ⇒ ParsecT σ τ η (Set.Set IOClass,Map.Map Text Text)
--- parseCfgs = undefined
--- parseIOClassesCfg = option (ioClasses,Map.empty) $ parseCfgs ⊳ (char '{' ⋫ (parseKV `sepBy` (char '^')) ⋪ char '}')
-parseIOClassesCfg = option (ioClasses,Map.empty) $ (char '{' ⋫ (parseKV `sepBy` (char '^')) ⋪ char '}') ≫ parseCfgs
-
-instance Parsecable VerboseOptions where
-  parser =
-    let mkVO ∷ Severity → Maybe ((Set.Set IOClass,Map.Map Text Text),LogFile)
-                        → VerboseOptions
-        mkVO sev Nothing          = VerboseOptions sev ioClasses
-                                                   Map.empty Nothing
-        mkVO sev (Just ((iocs,cfgs),fn)) = VerboseOptions sev iocs
-                                                   cfgs (Just fn)
-     in mkVO ⊳ parsecSeverity ⊵ optionMaybe ((,) ⊳ (char ':' ⋫ (parseIOClassesCfg) ⋪ char ':') ⊵ parser)
-
-parseVerboseOptionsTests ∷ TestTree
-parseVerboseOptionsTests =
-  let test exp txt =
-        testCase (unpack txt) $ assertRight (exp ≟) (parsec' txt txt)
-      testErr txt =
-        testCase (unpack txt) $ assertIsLeft (parsec' @VerboseOptions txt txt)
-      tmplog = LogFile (FileA [absfile|/tmp/log|])
-      logtmp = LogFile (FileR [relfile|log:tmp|])
-   in testGroup "parseVerboseOptions"
-            [ test (VerboseOptions Alert ioClasses Map.empty Nothing) "1"
-            , test (VerboseOptions Alert ioClasses Map.empty (Just tmplog))
-                   "1::/tmp/log"
-            , test (VerboseOptions Alert (Set.fromList [IOWrite])
-                                   Map.empty (Just logtmp))
-                   "1:{ioclasses=iowrite}:log:tmp"
-            , testErr "1:deliberately!!bad:log:tmp"
-            ]
-
-newtype LogFile = LogFile File
-  deriving (Eq,Printable,Show)
-
-instance Parsecable LogFile where
-  parser = LogFile ⊳ (some (noneOf "\0") ≫ mErrFail ∘ parse')
 
 data LogOptions = LogOptions { _verbosity     ∷ ℕ
                              , _quietitude    ∷ ℕ
@@ -341,31 +204,11 @@ options = lens _a (\ s a → s { _a = a })
 
 severityNames = [(toLower ⊳ show s,s) | s ← enumFrom Emergency]
 
-prefixesSeverity (fmap toLower → t) =
-  filter ((t `isPrefixOf`) ∘ fst) severityNames
-
-uniquelyPrefixesSeverity (prefixesSeverity → [(_,s)]) = Just s
-uniquelyPrefixesSeverity _                            = Nothing
-
-parsecSeverityN ∷ Stream σ η Char ⇒ ParsecT σ τ η Severity
-parsecSeverityN = toEnum ∘ read ∘ pure ⊳ oneOf "01234567"
-
-parsecSeverityS ∷ Stream σ η Char ⇒ ParsecT σ τ η Severity
-parsecSeverityS = do
-  s ← some letter
-  let u = uniquelyPrefixesSeverity s
-  case uniquelyPrefixesSeverity s of
-    Just u  → return u
-    Nothing → fail ("severity '" ⊕ s ⊕ "' not recognized")
-
-parsecSeverity ∷ Stream σ η Char ⇒ ParsecT σ τ η Severity
-parsecSeverity = try parsecSeverityN ∤ parsecSeverityS
-
 parseStdOptions ∷ Parser α → Parser (StdOptions α)
 parseStdOptions p = StdOptions ⊳ p ⊵ parseBaseOptions
 
-parsecVerboseOpts ∷ Stream σ η Char ⇒ ParsecT σ τ η (Severity, Maybe String)
-parsecVerboseOpts = (,) ⊳ parsecSeverity ⊵ optionMaybe (string "::" ⋫ many letter)
+-- parsecVerboseOpts ∷ Stream σ η Char ⇒ ParsecT σ τ η (Severity, Maybe String)
+-- parsecVerboseOpts = (,) ⊳ parsecSeverity ⊵ optionMaybe (string "::" ⋫ many letter)
 
 ----------------------------------------
 
@@ -395,25 +238,5 @@ filterVerbosity ∷ ∀ ε η υ ω α σ .
                   σ → η (LoggingT (Log ω) υ α → υ α)
 filterVerbosity stdOpts =
   verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)
-
---------------------------------------------------------------------------------
---                                   tests                                    --
---------------------------------------------------------------------------------
-
-tests ∷ TestTree
-tests = testGroup "StdOptions" [ parseCfgsTests, parseVerboseOptionsTests ]
-
-----------------------------------------
-
-_test ∷ IO ExitCode
-_test = runTestTree tests
-
---------------------
-
-_tests ∷ String → IO ExitCode
-_tests = runTestsP tests
-
-_testr ∷ String → ℕ → IO ExitCode
-_testr = runTestsReplay tests
 
 -- that's all, folks! ----------------------------------------------------------

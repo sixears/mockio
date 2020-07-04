@@ -4,7 +4,7 @@
 
 module ParsecPlusBase2
   ( AsParseError(..), IOParseError, Parsecable(..), Parser
-  , boundedDoubledChars, digits, parens, __parsecN__ )
+  , boundedDoubledChars, digits, parens, __parsecN__, uniquePrefix )
 where
 
 -- base --------------------------------
@@ -16,6 +16,7 @@ import Data.Char              ( Char )
 import Data.Either            ( Either( Left, Right ), either )
 import Data.Function          ( ($), id )
 import Data.Functor.Identity  ( Identity )
+import Data.List              ( isPrefixOf )
 import Data.Monoid            ( mappend )
 import Data.String            ( String )
 import Data.Word              ( Word8 )
@@ -142,6 +143,8 @@ parseEscaped l r = do
     return $ concat strings
 -}
 
+----------------------------------------
+
 {- | Parse any character except those in `cs`; they must be doubled.  Thus
 
      @ parse (many (try $ doubledChar "{}")) "test" "o}}{{p}" ≡ Right "o}{p" @
@@ -152,12 +155,16 @@ parseEscaped l r = do
 doubledChar ∷ [Char] → Parser Char
 doubledChar cs = (choice $ (\ c → char c ⋫ char c) ⊳ cs) ∤ noneOf cs
 
+----------------------------------------
+
 {- | Parse many characters, most directly, but those in `cs` must be doubled up.
 
      @ parse (doubledChars "{}") "test" "o}}{{p}x" ≡ Right "o}{p" @
  -}
 doubledChars ∷ [Char] → Parser [Char]
 doubledChars cs = many (try $ doubledChar cs)
+
+----------------------------------------
 
 {- | Parse many characters, most directly, bounded by `l` on the left and `r`
      on the right; instances of `l` & `r` within the text must be doubled up.
@@ -168,5 +175,21 @@ doubledChars cs = many (try $ doubledChar cs)
  -}
 boundedDoubledChars ∷ Char -> Char → Parser [Char]
 boundedDoubledChars l r = char l ⋫ doubledChars [l,r] ⋪ char r
+
+----------------------------------------
+
+{- | Parse a uniquely matching prefix.
+
+     Given a value table, and a parser; can we parse to something that uniquely
+     provides a result?  The parser succeeds if the parse output prefixes
+     precisely one result.
+ -}
+uniquePrefix ∷ ∀ α β χ σ τ η . (Eq α, Printable χ) ⇒
+               [([α],β)] → ([α] → χ) → ParsecT σ τ η [α] → ParsecT σ τ η β
+uniquePrefix ss e prs = do
+  s ← prs
+  case filter ((s `isPrefixOf`) ∘ fst) ss of
+    [(_,y)] → return y
+    _       → fail $ toString (e s)
 
 -- that's all, folks! ---------------------------------------------------------

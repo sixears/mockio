@@ -7,8 +7,11 @@ module ParsecPlus2
   ( AsParseError(..), IOParseError, Parsecable(..), ParseError
   , digits, parens, parsecFUTF8, parsecFUTF8L, parsecFileUTF8L, parsecFileUTF8
   , __parsecN__
+  , module ParsecPlusBase2
   )
 where
+
+import ParsecPlusBase2
 
 -- base --------------------------------
 
@@ -40,8 +43,6 @@ import Data.MoreUnicode.Monad         ( (≫) )
 import Control.Monad.Except  ( MonadError )
 
 -- parsec-plus-base --------------------
-
-import ParsecPlusBase2  ( Parsecable(..), digits, parens, __parsecN__ )
 
 import Parsec.Error  ( AsParseError( _ParseError ), IOParseError, ParseError )
 
