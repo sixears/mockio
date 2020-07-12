@@ -1,22 +1,23 @@
-{-# LANGUAGE NoImplicitPrelude          #-}
-{-# LANGUAGE UnicodeSyntax              #-}
-{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE UnicodeSyntax     #-}
 
 module StdMain.StdOptions
-  ( HasDryRun( dryRun ), HasVerbosity( verbosity ), StdOptions
-  , filterVerbosity, options, parseBaseOptions, parseStdOptions, quietitude
-  , verbosityLevel
-  )
+  ( HasDryRun( dryRun ), StdOptions, options, parseStdOptions )
 where
 
-import Prelude  ( (-), maxBound, minBound, pred, succ )
+import Prelude  ( (-), error, maxBound, minBound, pred, succ )
 
 -- base --------------------------------
 
 import Control.Applicative  ( many )
 import Control.Monad        ( return )
+import Control.Monad.Fail   ( MonadFail, fail )
 import Data.Bool            ( Bool( True, False ), otherwise )
-import Data.Function        ( flip, id )
+import Data.Either          ( Either( Left, Right ) )
+import Data.Function        ( ($), (&), flip, id )
+import Data.Maybe           ( Maybe( Just, Nothing ), fromMaybe, maybe )
+import Data.String          ( String )
 import Data.Ord             ( (>) )
 
 -- base-unicode-symbols ----------------
@@ -25,13 +26,19 @@ import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Ord.Unicode       ( (≤) )
 
+-- data-textual ------------------------
+
+import Data.Textual  ( toString )
+
 -- lens --------------------------------
 
+import Control.Lens.Getter  ( view )
 import Control.Lens.Lens    ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log  ( Log, filterSeverity )
+import Log              ( Log, filterSeverity )
+import Log.HasSeverity  ( HasSeverity( severity ) )
 
 -- logging-effect ----------------------
 
@@ -43,7 +50,7 @@ import MockIO  ( DoMock( DoMock, NoMock ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (≫), (⊣), (⊳), (⊵), ю, ℕ )
+import Data.MoreUnicode  ( (∤), (≫), (⊢), (⊣), (⊳), (⊵), ю, ℕ )
 
 -- mtl ---------------------------------
 
@@ -55,25 +62,32 @@ import Natural  ( length )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, flag, flag', help, long, short )
+import Options.Applicative  ( Parser, flag, flag', help, long, optional, short )
+
+-- optparse-plus -------------------------
+
+import OptParsePlus2  ( parsecOption )
 
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmtT )
+import Text.Fmt  ( fmt )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.UsageError  ( AsUsageError, throwUsage )
+import StdMain.VerboseOptions  ( HasVerboseOptions( verboseOptions )
+                               , VerboseOptions, defVOpts )
 
 --------------------------------------------------------------------------------
 
+{- | Default Severity level; start with Notice, -v goes to Informational. -}
+defaultSev ∷ Severity
+defaultSev = Notice
 
-data BaseOptions = BaseOptions { _verbosity_  ∷ ℕ
-                               , _quietitude_ ∷ ℕ
---                               , _log_file   ∷ AbsFile
-                               , _dryRun     ∷ DoMock
+{-
+data BaseOptions = BaseOptions { _verboseOptions  ∷ VerboseOptions
+                               , _dryRun_         ∷ DoMock
                                }
 
 class HasBaseOptions α where
@@ -82,13 +96,11 @@ class HasBaseOptions α where
 instance HasBaseOptions BaseOptions where
   stdOptions = id
 
-class HasVerbosity α where
-  verbosity ∷ Lens' α ℕ
-  quietitude ∷ Lens' α ℕ
+instance HasVerboseOptions BaseOptions where
+  verboseOptions = lens _verboseOptions (\ bo vo → bo { _verboseOptions = vo })
 
-instance HasVerbosity BaseOptions where
-  verbosity = lens _verbosity_ (\ s v → s { _verbosity_ = v })
-  quietitude = lens _quietitude_ (\ s q → s { _quietitude_ = q })
+instance HasSeverity BaseOptions where
+  severity = verboseOptions ∘ severity
 
 class HasDryRun α where
   dryRun ∷ Lens' α DoMock
@@ -97,63 +109,79 @@ instance HasDryRun DoMock where
   dryRun = id
 
 instance HasDryRun BaseOptions where
-  dryRun = lens _dryRun (\ s d → s { _dryRun = d })
+  dryRun = lens _dryRun_ (\ s d → s { _dryRun_ = d })
 
 parseBaseOptions ∷ Parser BaseOptions
-parseBaseOptions = BaseOptions ⊳ (length ⊳ many (flag' () (short 'v')))
-                                ⊵ (length ⊳ many (flag' () (long "quiet")))
-                                ⊵ (flag NoMock DoMock (ю [ short 'n'
-                                                         , long "dry-run"
-                                                         , help "dry run" ]))
+parseBaseOptions =
+  let count m = length ⊳ many (flag' () m)
+      vs_qs   = verbosityLevel ⊳ (count (short 'v')) ⊵ (count (long "quiet"))
+      verbose = parsecOption (long "verbose")
+   in BaseOptions ⊳ (fromMaybe (defVOpts defaultSev) ⊳ optional ((defVOpts ⊳ vs_qs ∤ verbose)))
+                  ⊵ (flag NoMock DoMock (ю [ short 'n', long "dry-run"
+                                           , help "dry run" ]))
 
-data StdOptions α = StdOptions { _a ∷ α, _s ∷ BaseOptions }
+-}
 
-instance HasBaseOptions (StdOptions α) where
-  stdOptions = lens _s (\ sso s → sso { _s = s })
+----------------------------------------
+
+-- data StdOptions' α = StdOptions' { _nonBaseOptions ∷ α, _s ∷ BaseOptions }
+
+data StdOptions α = StdOptions { _nonBaseOptions ∷ α
+                               , _verboseOptions ∷ VerboseOptions
+                               , _dryRun         ∷ DoMock
+                               }
+
+class HasDryRun α where
+  dryRun ∷ Lens' α DoMock
+
+instance HasDryRun DoMock where
+  dryRun = id
+
+-- instance HasBaseOptions (StdOptions α) where
+--   stdOptions = lens _s (\ sso s → sso { _s = s })
 
 instance HasDryRun (StdOptions α) where
-  dryRun = stdOptions ∘ dryRun
+  dryRun = lens _dryRun (\ s d → s { _dryRun = d })
+--  dryRun = stdOptions ∘ dryRun
 
-instance HasVerbosity (StdOptions α) where
-  verbosity  = stdOptions ∘ verbosity
-  quietitude = stdOptions ∘ quietitude
+instance HasVerboseOptions (StdOptions α) where
+  verboseOptions = lens _verboseOptions (\ so vo → so { _verboseOptions = vo })
+
+instance HasSeverity (StdOptions α) where
+  severity = verboseOptions ∘ severity
 
 options ∷ Lens' (StdOptions α) α
-options = lens _a (\ s a → s { _a = a })
+options = lens _nonBaseOptions
+               (\ s nonBaseOptions → s { _nonBaseOptions = nonBaseOptions })
+
+-- parseStdOptions ∷ Parser α → Parser (StdOptions α)
+-- parseStdOptions p = StdOptions ⊳ p ⊵ parseBaseOptions
 
 parseStdOptions ∷ Parser α → Parser (StdOptions α)
-parseStdOptions p = StdOptions ⊳ p ⊵ parseBaseOptions
-
--- parsecVerboseOpts ∷ Stream σ η Char ⇒ ParsecT σ τ η (Severity, Maybe String)
--- parsecVerboseOpts = (,) ⊳ parsecSeverity ⊵ optionMaybe (string "::" ⋫ many letter)
+parseStdOptions p =
+  let count m = length ⊳ many (flag' () m)
+      vs_qs   = verbosityLevel ⊳ (count (short 'v')) ⊵ (count (long "quiet"))
+      verbose = parsecOption (long "verbose")
+   in StdOptions ⊳ p
+                 ⊵ (fromMaybe (defVOpts defaultSev) ⊳ optional ((defVOpts ⊳ vs_qs ∤ verbose)))
+                 ⊵ (flag NoMock DoMock (ю [ short 'n', long "dry-run"
+                                           , help "dry run" ]))
 
 ----------------------------------------
 
-verbosityLevel ∷ (HasVerbosity σ, AsUsageError ε, MonadError ε η) ⇒
-                 σ → η Severity
-verbosityLevel opts =
-  let v = opts ⊣ verbosity
-      q = opts ⊣ quietitude
-      warnTooLow  x = [fmtT|warning: attempt to exceed min verbosity level %w|] x
-      warnTooHigh x = [fmtT|warning: attempt to exceed max verbosity level %w|] x
-      succs 0 x = return x
-      succs n x | x ≡ maxBound = throwUsage (warnTooHigh x)
+verbosityLevel ∷ ℕ → ℕ → Severity
+verbosityLevel v q =
+  let warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
+      warnTooHigh x = [fmt|warning: attempt to exceed max verbosity level %w|] x
+      succs 0 x = x
+      succs n x | x ≡ maxBound = error (warnTooHigh x)
                 | otherwise    = succs (n-1) (succ x)
-      preds 0 x = return x
-      preds n x | x ≡ minBound = throwUsage (warnTooLow x)
+      preds 0 x = x
+      preds n x | x ≡ minBound = error (warnTooLow x)
                 | otherwise    = preds (n-1) (pred x)
       l = case v > q of
-            True  → succs (v-q) Notice
-            False → preds (q-v) Notice
+            True  → succs (v-q) defaultSev
+            False → preds (q-v) defaultSev
    in l
-
-----------------------------------------
-
-filterVerbosity ∷ ∀ ε η υ ω α σ .
-                  (AsUsageError ε, MonadError ε η, MonadLog (Log ω) υ,
-                  HasVerbosity σ) ⇒
-                  σ → η (LoggingT (Log ω) υ α → υ α)
-filterVerbosity stdOpts =
-  verbosityLevel stdOpts ≫ return ∘ filterSeverity ∘ flip (≤)
 
 -- that's all, folks! ----------------------------------------------------------

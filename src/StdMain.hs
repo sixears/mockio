@@ -27,7 +27,7 @@ import Exited2  ( ToExitCode )
 
 -- log-plus ----------------------------
 
-import Log  ( CSOpt( NoCallStack ), Log, logToStderr )
+import Log  ( CSOpt( NoCallStack ), Log, filterMinSeverity, logToStderr )
 
 -- logging-effect ----------------------
 
@@ -62,7 +62,7 @@ import Data.Text  ( Text )
 ------------------------------------------------------------
 
 import StdMain.StdOptions  ( HasDryRun( dryRun ), StdOptions
-                           , filterVerbosity, options, parseStdOptions )
+                           , options, parseStdOptions )
 import StdMain.UsageError  ( AsUsageError, UsageError )
 
 --------------------------------------------------------------------------------
@@ -78,8 +78,8 @@ stdMain_ ∷ ∀ ε α σ ω μ .
 stdMain_ desc p io = do
   o ← parseOpts Nothing desc (parseStdOptions p)
   Exited.doMain $ do
-    filt ← filterVerbosity o
-    logToStderr NoCallStack (filt (io o))
+    -- filt ← filterVerbosity o
+    logToStderr NoCallStack (filterMinSeverity o (io o))
 
 ----------
 

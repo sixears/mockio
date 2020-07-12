@@ -5,7 +5,6 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NoImplicitPrelude          #-}
--- {-# LANGUAGE OverloadedLists            #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
@@ -19,7 +18,7 @@ module Log
   , emergency', alert', critical', err', warn', notice', info', debug'
   , emergencyT, alertT, criticalT, errT, warnT, noticeT, infoT, debugT
 
-  , filterLog, filterLog', filterSeverity
+  , filterLog, filterLog', filterMinSeverity, filterSeverity
   , fromList
   , log, logMsg, log', logMsg', logT, logMsgT, logT', logMsgT'
   , logIO, logIO', logIOT
@@ -63,6 +62,7 @@ import Data.Bool.Unicode      ( (∧) )
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
+import Data.Ord.Unicode       ( (≤) )
 
 -- data-default ------------------------
 
@@ -165,7 +165,7 @@ import Data.Time.Clock     ( getCurrentTime )
 --                     local imports                       -
 ------------------------------------------------------------
 
-import Log.HasSeverity    ( severity )
+import Log.HasSeverity    ( HasSeverity( severity ) )
 import Log.LogEntry       ( LogEntry, LogEntry
                           , attrs, logEntry
                           , _le0, _le1, _le2, _le3, _le4n, _le5n
@@ -781,6 +781,10 @@ filterLog p = filterLog' (p ∘ view attrs)
 filterSeverity ∷ MonadLog (Log ω) η ⇒
                  (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
 filterSeverity p = filterLog' (p ∘ view severity)
+
+filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
+                    α → LoggingT (Log ω) η σ → η σ
+filterMinSeverity = filterSeverity ∘ (≤) ∘ view severity
 
 filterTests ∷ TestTree
 filterTests =

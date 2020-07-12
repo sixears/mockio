@@ -5,7 +5,7 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module StdMain.VerboseOptions
-  ( LogFile, VerboseOptions )
+  ( LogFile, HasVerboseOptions( verboseOptions ), VerboseOptions, defVOpts )
 where
 
 import Prelude  ( enumFrom )
@@ -18,7 +18,7 @@ import Data.Bifunctor         ( bimap, first )
 import Data.Char              ( Char, toLower )
 import Data.Either            ( Either )
 import Data.Eq                ( Eq )
-import Data.Function          ( ($) )
+import Data.Function          ( ($), id )
 import Data.Functor           ( fmap )
 import Data.Functor.Identity  ( Identity )
 import Data.List              ( intercalate )
@@ -52,13 +52,21 @@ import FPath.File       ( File( FileA, FileR ) )
 import FPath.Parseable  ( parse' )
 import FPath.RelFile    ( relfile )
 
+-- lens --------------------------------
+
+import Control.Lens.Lens  ( Lens', lens )
+
+-- log-plus ----------------------------
+
+import Log.HasSeverity  ( HasSeverity( severity ) )
+
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( Severity( Alert, Emergency ) )
+import Control.Monad.Log  ( Severity( Alert, Emergency, Notice ) )
 
 -- mockio ------------------------------
 
-import MockIO.IOClass  ( IOClass( IOCmdR, IOCmdW, IOWrite ), ioClasses )
+import MockIO.IOClass  ( IOClass( IOCmdR, IOCmdW, IORead, IOWrite ), ioClasses )
 
 -- monaderror-io -----------------------
 
@@ -116,7 +124,7 @@ import Text.Fmt  ( fmt, fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.UsageError  ( AsUsageError, UsageError, readUsage, throwUsage )
+import StdMain.UsageError   ( AsUsageError, UsageError, readUsage, throwUsage )
 
 --------------------------------------------------------------------------------
 
@@ -141,6 +149,12 @@ data VerboseOptions =
                  }
   deriving (Eq,Show)
 
+class HasVerboseOptions α where
+  verboseOptions ∷ Lens' α VerboseOptions
+
+instance HasVerboseOptions VerboseOptions where
+  verboseOptions = id
+
 ----------------------------------------
 
 instance Printable VerboseOptions where
@@ -150,9 +164,19 @@ instance Printable VerboseOptions where
   print (VerboseOptions sev ioclasses cfg (Just logfile)) =
     P.text $ [fmt|%w-[%L]-[%w]-%T|] sev ioclasses cfg logfile
 
-type CfgsParse = (Maybe (IOClassSet), TextMap)
+----------------------------------------
+
+instance HasSeverity VerboseOptions where
+  severity = lens _logSeverity (\ vo s → vo { _logSeverity = s })
 
 ----------------------------------------
+
+defVOpts ∷ Severity → VerboseOptions
+defVOpts sev = VerboseOptions sev ioClasses Map.empty Nothing
+
+----------------------------------------
+
+type CfgsParse = (Maybe (IOClassSet), TextMap)
 
 -- recursively parse a set of config pairs
 parseCfgs__ ∷ (AsUsageError ε, MonadError ε η) ⇒
@@ -255,11 +279,12 @@ parsecSeverity = try parsecSeverityN ∤ parsecSeverityS
 
 ----------------------------------------
 
-mkVerboseOptions ∷ Severity→ Maybe((IOClassSet,TextMap),LogFile)→ VerboseOptions
+mkVerboseOptions ∷ Severity → Maybe((IOClassSet,TextMap),Maybe LogFile)
+                 → VerboseOptions
 mkVerboseOptions sev c =
   case c of
     Nothing                 → VerboseOptions sev ioClasses Map.empty Nothing
-    (Just ((iocs,cfgs),fn)) → VerboseOptions sev iocs      cfgs      (Just fn)
+    (Just ((iocs,cfgs),fn)) → VerboseOptions sev iocs      cfgs      fn
 
 ----------------------------------------
 
@@ -267,9 +292,9 @@ parseVerboseOptions ∷ ∀ σ η . Stream σ Identity Char ⇒ Parsec σ η Ver
 parseVerboseOptions =
   let colon = char ':'
       betwixt p = between p p
-   in mkVerboseOptions ⊳ parsecSeverity
+   in mkVerboseOptions ⊳ option Notice parsecSeverity
                        ⊵ optionMaybe ((,) ⊳ (betwixt colon (parseIOClassesCfg))
-                       ⊵ parser)
+                                          ⊵ optionMaybe parser)
 
 ----------
 
@@ -290,6 +315,14 @@ parseVerboseOptionsTests =
                                    Map.empty (Just logtmp))
                    "1:{ioclasses=iowrite}:log:tmp"
             , testErr "1:deliberately!!bad:log:tmp"
+            , test (VerboseOptions Notice ioClasses Map.empty (Just tmplog))
+                   "::/tmp/log"
+            , test (VerboseOptions Notice (Set.fromList [IORead]) Map.empty
+                                   (Just tmplog))
+                   ":{IOCLASS=ioRead}:/tmp/log"
+            , test (VerboseOptions Notice (Set.fromList [IOCmdW]) Map.empty
+                                   Nothing)
+                   ":{ioclass=IOCMDW}:"
             ]
 
 ----------------------------------------
