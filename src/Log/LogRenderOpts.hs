@@ -220,7 +220,7 @@ lroRendererTests =
                           in testCase nme $ exp ≟ renderDoc rendered
       checks nme exp rs = let opts     = logRenderOpts' rs Unbounded
                               rendered = lroRenderer opts _le0
-                           in assertListEq nme exp (T.lines $renderDoc rendered)
+                           in assertListEq nme exp (T.lines $ renderDoc rendered)
    in testGroup "lroRenderer"
                 [ check "plain" "log_entry 1" []
                 , check "sev" "[Info] log_entry 1" [renderLogWithSeverity]
