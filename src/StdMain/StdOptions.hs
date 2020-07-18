@@ -19,7 +19,8 @@ import Prelude  ( (-), error, maxBound, minBound, pred, succ )
 
 import Control.Applicative  ( many )
 import Data.Bool            ( Bool( True, False ), otherwise )
-import Data.Function        ( const, id )
+import Data.Foldable        ( foldr )
+import Data.Function        ( ($),  const, id )
 import Data.Maybe           ( fromMaybe )
 import Data.Ord             ( (>) )
 import Text.Show            ( Show( show ) )
@@ -43,7 +44,7 @@ import Log.HasSeverity  ( HasSeverity( severity ) )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( Severity( Notice ) )
+import Control.Monad.Log  ( Severity( Debug, Warning ) )
 
 -- more-unicode ------------------------
 
@@ -52,11 +53,14 @@ import Data.MoreUnicode  ( (∤), (⊳), (⊵), ℕ )
 -- natural-plus ------------------------
 
 import Natural  ( AtMost( Cons, Nil ), Countable( count ), Nat( S ), Natty
-                , One, Two, atMost, atMostOne, atMostTwo, count, length )
+                , One, Two, atMost, atMostOne, atMostTwo, count, four, length
+                , replicate, three
+                )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, flag', help, long, optional, short )
+import Options.Applicative  ( FlagFields, Mod, Parser
+                            , flag', help, long, optional, short )
 
 -- optparse-plus -------------------------
 
@@ -156,9 +160,10 @@ dryRun2P = DryRunLevel ⊳ atMostTwo flagDryRun
 
 ------------------------------------------------------------
 
-{- | Default Severity level; start with Notice, -v goes to Informational. -}
+{- | Default Severity level; start with Warning, -v goes to Notice then
+     Informational. -}
 defaultSev ∷ Severity
-defaultSev = Notice
+defaultSev = Warning
 
 ----------------------------------------
 
@@ -166,15 +171,6 @@ data StdOptions ν α = StdOptions { _nonBaseOptions ∷ α
                                  , _verboseOptions ∷ VerboseOptions
                                  , _dryRunLevel    ∷ DryRunLevel ν
                                  }
-
--- class HasDryRun α where
---  dryRun ∷ Lens' α DoMock
-
--- instance HasDryRun DoMock where
---   dryRun = id
-
--- instance HasDryRun (StdOptions ν α) where
---   dryRun = lens _dryRun (\ s d → s { _dryRun = d })
 
 instance HasDryRunLevel ν (StdOptions ν α) where
   dryRunLevel = lens _dryRunLevel (\ so drl → so { _dryRunLevel = drl })
@@ -192,10 +188,21 @@ options = lens _nonBaseOptions
 parseStdOptions ∷ Natty ν → Parser α → Parser (StdOptions ν α)
 parseStdOptions n p =
   let countF m = length ⊳ many (flag' () m)
+      -- up to n flags, each invoking an instance of a function
+      flagn ∷ Natty ν → Mod FlagFields () → (α → α) → α → Parser α
+      flagn i m f a =
+        (\ c → foldr ($) a (replicate (count c) f)) ⊳ atMost i (flag' () m)
+      flagsev ∷ Natty ν → Mod FlagFields () → (Severity → Severity)
+              → Parser VerboseOptions
+      flagsev i m f = defVOpts ⊳ flagn i m f Warning
+      flagv         = flagsev three (short 'v') succ
+      flagq         = flagsev four (long "quiet") pred
+ --silent
+      flagd         = defVOpts ⊳ flag' Debug (long "debug")
       vs_qs   = verbosityLevel ⊳ (countF (short 'v')) ⊵ (countF (long "quiet"))
       verbose = parsecOption (long "verbose")
    in StdOptions ⊳ p
-                 ⊵ (fromMaybe (defVOpts defaultSev) ⊳ optional ((defVOpts ⊳ vs_qs ∤ verbose)))
+                 ⊵ (flagv ∤ flagq ∤ flagd ∤ verbose)
                  ⊵ dryRunP n
 
 ----------------------------------------

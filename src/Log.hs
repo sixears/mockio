@@ -62,7 +62,7 @@ import Data.Bool.Unicode      ( (∧) )
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-import Data.Ord.Unicode       ( (≤) )
+import Data.Ord.Unicode       ( (≥) )
 
 -- data-default ------------------------
 
@@ -784,7 +784,7 @@ filterSeverity p = filterLog' (p ∘ view severity)
 
 filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
                     α → LoggingT (Log ω) η σ → η σ
-filterMinSeverity = filterSeverity ∘ (≤) ∘ view severity
+filterMinSeverity = filterSeverity ∘ (≥) ∘ view severity
 
 filterTests ∷ TestTree
 filterTests =

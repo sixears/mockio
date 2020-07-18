@@ -102,14 +102,17 @@ stdMain ∷ ∀ ε α σ ω ν μ .
           Natty ν
         → Text
         → Parser α
-        → (DryRunLevel ν → α → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) σ)
+        → (DryRunLevel ν → α
+                         → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) σ)
         → μ ()
-stdMain n desc p io = stdMain_ n desc p (\ o → io (o ⊣ dryRunLevel) (o ⊣ options))
+stdMain n desc p io =
+  stdMain_ n desc p (\ o → io (o ⊣ dryRunLevel) (o ⊣ options))
 
 ----------
 
 {- | Simpler type-signature for stdMain', where the io is expected to return
-     `()`, and the error is specifically a `UsageError`; intended for simple IO
+     `()`, the error is specifically a `UsageError`, and there is a single
+     dry-run level which is translated to DoMock/NoMock; intended for simple IO
      programs.
  -}
 
@@ -119,6 +122,7 @@ stdMain' ∷ ∀ ε α ω μ .
          → Parser α
          → (DoMock → α → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) ())
          → μ ()
-stdMain' desc p io = stdMain one desc p (\ dr a → io (ifDryRun dr DoMock NoMock) a )
+stdMain' desc p io =
+  stdMain one desc p (\ dr a → io (ifDryRun dr DoMock NoMock) a )
 
 -- that's all, folks! ----------------------------------------------------------

@@ -30,7 +30,7 @@ import Log  ( Log )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, Severity( Informational, Notice ) )
+import Control.Monad.Log  ( MonadLog, Severity( Informational, Warning ) )
 
 -- mtl ---------------------------------
 
@@ -117,7 +117,7 @@ go mock opts = do
          Just wfn → do
                   let logmsg DoMock = [fmtT|(write %t)|] wfn
                       logmsg NoMock = [fmtT|write %t|] wfn
-                  mkIO' Notice IOWrite logmsg
+                  mkIO' Warning IOWrite logmsg
                                 (openFile "/dev/null" WriteMode)
                                 (openFile (unpack wfn) WriteMode) mock
 

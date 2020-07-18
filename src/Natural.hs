@@ -5,10 +5,12 @@
 
 module Natural
   ( AtMost( Cons, Nil ), Countable( count ), Nat( S, Z ), Natty( Sy, Zy), None
-  , One, Two
   , ℕ
-  , atMost, atMostOne, atMostTwo, fromEnum, length, none, one, toEnum, two
+  , atMost, atMostOne, atMostTwo, fromEnum, length, none, replicate, toEnum
   , zeroOneOrTwo
+
+  , One, Two, Three, Four
+  , one, two, three, four
   )
 where
 
@@ -20,6 +22,7 @@ import GHC.Num  ( (+), (-) )
 -- base --------------------------------
 
 import qualified  Data.Foldable
+import qualified  Data.List
 
 import Control.Applicative  ( Alternative, pure )
 import Data.Bool            ( otherwise )
@@ -47,6 +50,9 @@ fromEnum = GHC.Real.fromIntegral ∘ GHC.Enum.fromEnum
 
 toEnum ∷ GHC.Enum.Enum α ⇒ ℕ → α
 toEnum = GHC.Enum.toEnum ∘ GHC.Num.fromInteger ∘ GHC.Real.toInteger
+
+replicate ∷ ℕ → α → [α]
+replicate = Data.List.replicate ∘ GHC.Real.fromIntegral
 
 ------------------------------------------------------------
 
@@ -94,9 +100,11 @@ atMostOne = atMost (Sy Zy)
 atMostTwo :: Alternative f => f a -> f (AtMost Two a)
 atMostTwo = atMost (Sy (Sy Zy))
 
-type None = 'Z
-type One  = 'S None
-type Two  = 'S One -- ('S 'Z)
+type None  = 'Z
+type One   = 'S None
+type Two   = 'S One -- ('S 'Z)
+type Three = 'S Two
+type Four  = 'S Three
 
 none ∷ Natty 'Z
 none = Zy
@@ -106,5 +114,11 @@ one  = Sy none
 
 two ∷ Natty ('S ('S 'Z))
 two  = Sy one
+
+three ∷ Natty ('S ('S ('S 'Z)))
+three  = Sy two
+
+four ∷ Natty ('S ('S ('S ('S 'Z))))
+four  = Sy three
 
 -- that's all, folks! ----------------------------------------------------------
