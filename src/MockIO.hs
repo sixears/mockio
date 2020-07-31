@@ -3,7 +3,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO
-  ( DoMock(..), mkIO, mkIO', tests )
+  ( DoMock(..), mock, mkIO, mkIO', tests )
 where
 
 -- base --------------------------------
@@ -112,6 +112,10 @@ _li1 = do
 data DoMock = DoMock | NoMock
   deriving (Eq,Show)
 
+mock ∷ α → α → DoMock → α
+mock m _ DoMock = m
+mock _ a NoMock = a
+
 {- | Create an IO action that may be mocked; and log it. -}
 mkIO' ∷ ∀ ω τ μ α .
          (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
@@ -124,9 +128,9 @@ mkIO' ∷ ∀ ω τ μ α .
        → IO α         -- ^ the IO to perform when not mocked
        → DoMock       -- ^ whether to mock
        → μ α
-mkIO' sv ioc lg mock_value io mock = do
-  logIO sv (def & ioClass ⊢ ioc) (lg mock)
-  case mock of
+mkIO' sv ioc lg mock_value io mck = do
+  logIO sv (def & ioClass ⊢ ioc) (lg mck)
+  case mck of
     NoMock → liftIO io
     DoMock → liftIO mock_value
 
@@ -136,10 +140,10 @@ mkIO' sv ioc lg mock_value io mock = do
 mkIO ∷ ∀ ω τ μ α .
         (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
         Severity → IOClass → τ → α → IO α → DoMock → μ α
-mkIO sv ioc lg mock_value io mock =
+mkIO sv ioc lg mock_value io mck =
   let plog l DoMock = parens (toDoc_ l)
       plog l NoMock = toDoc_ l
-   in mkIO' sv ioc (plog lg) (return mock_value) io mock
+   in mkIO' sv ioc (plog lg) (return mock_value) io mck
 
 -- XXX simplify logging
 -- XXX simple functions for severity

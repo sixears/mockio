@@ -4,25 +4,30 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 
-import Prelude  ( fromIntegral )
-
 -- base --------------------------------
 
-import qualified  GHC.Enum
+import qualified  System.IO
 
 import Control.Applicative     ( optional )
-import Control.Monad           ( forM_, return, when )
+import Control.Monad           ( return )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Function           ( ($) )
 import Data.List               ( take )
-import Data.Maybe              ( Maybe( Just, Nothing ) )
-import System.IO               ( IO, IOMode( WriteMode )
-                               , hClose, openFile, stdout )
+import Data.Maybe              ( Maybe( Just, Nothing ), maybe )
+import System.IO               ( Handle, IO, IOMode( WriteMode ), stdout )
 
 -- base-unicode-symbols ----------------
 
-import Data.Eq.Unicode        ( (≢) )
 import Data.Function.Unicode  ( (∘) )
+
+-- data-textual ------------------------
+
+import Data.Textual  ( toString, toText )
+
+-- fpath -------------------------------
+
+import FPath.AbsFile    ( AbsFile )
+import FPath.Parseable  ( readM )
 
 -- log-plus ----------------------------
 
@@ -41,12 +46,11 @@ import Control.Monad.Except  ( MonadError )
 import Data.MoreUnicode.Applicative  ( (⊵) )
 import Data.MoreUnicode.Functor      ( (⊳) )
 import Data.MoreUnicode.Monoid       ( ю )
-import Data.MoreUnicode.Natural      ( ℕ )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser, help, long, metavar, short
-                            , strArgument, strOption )
+import Options.Applicative  ( Parser
+                            , help, long, metavar, option, short, strArgument )
 
 -- std-main ----------------------------
 
@@ -55,8 +59,10 @@ import StdMain.UsageError  ( AsUsageError )
 
 -- text --------------------------------
 
-import Data.Text     ( Text, lines, unpack )
-import Data.Text.IO  ( hPutStrLn, readFile )
+import qualified  Data.Text.IO
+
+import Data.Text     ( Text, lines, unlines, unpack )
+import Data.Text.IO  ( hPutStr )
 
 -- tfmt --------------------------------
 
@@ -73,31 +79,18 @@ import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 -- a very simple version of 'head', for testing MockIO
 
-data Options = Options { fileName      ∷ Text
-                       , writeFileName ∷ Maybe Text
---                       , _stdOptions    ∷ StdOptions
+data Options = Options { fileName  ∷ Text
+                       , outputFile ∷ Maybe AbsFile
                        }
-
-{-
-instance HasStdOptions Options where
-  stdOptions = lens _stdOptions (\ o s → o { _stdOptions = s })
-
-instance HasDryRun Options where
-  dryRun = stdOptions ∘ dryRun
--}
 
 parseOptions ∷ Parser Options
 parseOptions = Options ⊳ strArgument (metavar "FILE")
-                       ⊵ optional (strOption (ю [ long "output"
-                                                , short 'o'
-                                                , metavar "FILE"
-                                                , help "write output here"
-                                                ])
+                       ⊵ optional (option readM (ю [ long "output"
+                                                   , short 'o'
+                                                   , metavar "FILE"
+                                                   , help "write output here"
+                                                   ])
                                   )
---                       ⊵ parseStdOptions
-
-fromEnum ∷ GHC.Enum.Enum α ⇒ α → ℕ
-fromEnum = fromIntegral ∘ GHC.Enum.fromEnum
 
 main ∷ IO ()
 main = -- XXX Tidy This Up
@@ -106,26 +99,38 @@ main = -- XXX Tidy This Up
        -- XXX More verbose options, incl. file,level,callstack,ioclass
        -- verbose=[3|WARNING|wARn]:{@callstack/ioread}:/
        -- XXX compress main, xx
+       -- decent help texts for std options, particualrly --verbose with all its
+       -- ioclasses, etc.
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
 go ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
      DoMock → Options → μ ()
-go mock opts = do
-  let fn      = fileName opts
-  fh ← case writeFileName opts of
-         Nothing  → return stdout
-         Just wfn → do
-                  let logmsg DoMock = [fmtT|(write %t)|] wfn
-                      logmsg NoMock = [fmtT|write %t|] wfn
-                  mkIO' Warning IOWrite logmsg
-                                (openFile "/dev/null" WriteMode)
-                                (openFile (unpack wfn) WriteMode) mock
+go mck opts = do
+  let fn = fileName opts
+  txt ← take 10 ∘ lines ⊳ readFile fn
+  writeFile mck (outputFile opts) (unlines txt)
 
-  txt ← mkIO Informational IORead ([fmtT|read %t|] fn) "mock text"
-             (readFile (unpack fn)) NoMock
-  liftIO $ forM_ (take 10 (lines txt)) (hPutStrLn fh)
-  when (fh ≢ stdout) $ liftIO (hClose fh)
-  return ()
+withFile ∷ MonadIO μ ⇒ AbsFile → IOMode → (Handle → IO ω) → μ ω
+withFile fn mode = liftIO ∘ System.IO.withFile (toString fn) mode
 
+withWriteFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒
+                DoMock → α → Maybe AbsFile → (Handle → IO α) → μ α
+withWriteFile mck a fn io = do
+  let fname         = maybe "-STDOUT-" toText fn
+      logmsg DoMock = [fmtT|(write %t)|] fname
+      logmsg NoMock = [fmtT|write %t|]   fname
+  case fn of
+    Nothing  → liftIO $ io stdout
+    Just wfn → 
+        mkIO' Warning IOWrite logmsg (return a) (withFile wfn WriteMode io) mck
+
+writeFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒
+            DoMock → Maybe AbsFile → Text → μ ()
+writeFile mck fnY txt = withWriteFile mck () fnY (\ h → hPutStr h txt)
+
+readFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒ Text → μ Text
+readFile fn = let logmsg = [fmtT|read %t|] fn
+                  result = Data.Text.IO.readFile (unpack fn)
+               in mkIO Informational IORead logmsg "" result NoMock
 
 -- that's all, folks! ----------------------------------------------------------

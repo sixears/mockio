@@ -3,6 +3,7 @@
 {-# LANGUAGE ImplicitParams             #-}
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MonadComprehensions        #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NoImplicitPrelude          #-}
 {-# LANGUAGE RankNTypes                 #-}
@@ -44,6 +45,7 @@ import Data.Foldable           ( Foldable, all, foldl', foldl1
 import Data.Function           ( ($), flip, id )
 import Data.Functor            ( fmap )
 import Data.List               ( zip )
+import Data.List.NonEmpty      ( NonEmpty( (:|) ) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.Monoid             ( Monoid )
 import Data.Ord                ( (<) )
@@ -110,11 +112,24 @@ import Data.MonoTraversable  ( Element
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Bool     ( 𝔹 )
-import Data.MoreUnicode.Functor  ( (⊳), (⩺) )
-import Data.MoreUnicode.Lens     ( (⊣) )
-import Data.MoreUnicode.Monad    ( (⪼) )
-import Data.MoreUnicode.Natural  ( ℕ )
+import Data.MoreUnicode.Applicative  ( (⋫), (∤) )
+import Data.MoreUnicode.Bool         ( 𝔹 )
+import Data.MoreUnicode.Functor      ( (⊳), (⩺) )
+import Data.MoreUnicode.Lens         ( (⊣) )
+import Data.MoreUnicode.Monad        ( (⪼) )
+import Data.MoreUnicode.Natural      ( ℕ )
+
+-- parsec ------------------------------
+
+import Text.Parsec.Char  ( string )
+
+-- parsec-plus -------------------------
+
+import ParsecPlus2  ( Parsecable( parser ), caseInsensitiveString )
+
+-- parser-plus -------------------------
+
+import ParserPlus  ( tries )
 
 -- prettyprinter -----------------------
 
@@ -630,6 +645,21 @@ logToFD' ls h io = do
 ----------------------------------------
 
 data CSOpt = NoCallStack | CallStackHead | FullCallStack
+  deriving (Eq, Show)
+
+instance Parsecable CSOpt where
+  parser = let strs =    ("NoCallStack"   , NoCallStack)
+                    :| [ ("NoCS"          , NoCallStack)
+                       , ("CSHead"        , CallStackHead)
+                       , ("CSH"           , CallStackHead)
+                       , ("CallStackHead" , CallStackHead)
+                       , ("FCS"           , FullCallStack)
+                       , ("FullCallStack" , FullCallStack)
+                       , ("FullCS"        , FullCallStack)
+                       , ("CallStack"     , FullCallStack)
+                       , ("Stack"         , FullCallStack)
+                       ]
+            in tries [ caseInsensitiveString st ⋫ return cso | (st,cso) ← strs]
 
 {- | Log to a plain file with given callstack choice. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒

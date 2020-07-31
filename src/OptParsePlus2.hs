@@ -65,7 +65,7 @@ import MonadIO  ( MonadIO, liftIO, warn )
 
 -- parsec-plus -------------------------
 
-import ParsecPlus2  ( Parsecable, parsec' )
+import ParsecPlus2  ( ParseError, Parsecable, parsec )
 
 -- textual-plus ------------------------
 
@@ -177,7 +177,7 @@ parseOpts progn descn prsr = liftIO $ do
 ----------------------------------------
 
 parsecReader ∷ Parsecable α ⇒ ReadM α
-parsecReader = eitherReader (\ s → first show $ parsec' s s)
+parsecReader = eitherReader (\ s → first show $ parsec @_ @ParseError s s)
 
 ----------------------------------------
 

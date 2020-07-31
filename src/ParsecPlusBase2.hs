@@ -4,13 +4,16 @@
 
 module ParsecPlusBase2
   ( AsParseError(..), IOParseError, Parsecable(..), Parser
-  , boundedDoubledChars, digits, parens, __parsecN__, uniquePrefix )
+  , boundedDoubledChars, caseInsensitiveChar, caseInsensitiveString, digits
+  , parens, __parsecN__, uniquePrefix
+  )
 where
 
 -- base --------------------------------
 
 import Control.Applicative    ( many )
 import Data.Bifunctor         ( first )
+import Data.Char              ( toLower, toUpper )
 import Data.Functor.Identity  ( Identity )
 import Data.List              ( isPrefixOf )
 import Data.Word              ( Word8 )
@@ -70,20 +73,11 @@ class Parsecable χ where
   parsec sourceName t = case parse parser (toString sourceName) t of
                            Left  e → throwError (_ParseError # ParseError e)
                            Right s → return s
-
-  ------------------
-
-  {- | Like `parsec`, with error type reified to `ParseError`. -}
-  parsec' ∷ ∀ μ s σ .
-            (MonadError ParseError μ, Stream s Identity Char, Printable σ) ⇒
-            σ → s → μ χ
-  parsec' = parsec
-
   ------------------
 
   {- | *PARTIAL*: `parsec`, will error on failure to parse -}
   __parsec__ ∷ ∀ s σ . (Printable σ, Stream s Identity Char) ⇒ σ → s → χ
-  __parsec__ sourceName = __right__ ∘ parsec' sourceName
+  __parsec__ sourceName = __right__ ∘ parsec @_ @ParseError sourceName
 
 ----------------------------------------
 
@@ -184,5 +178,19 @@ uniquePrefix ss e prs = do
   case filter ((s `isPrefixOf`) ∘ fst) ss of
     [(_,y)] → return y
     _       → fail $ toString (e s)
+
+----------------------------------------
+
+{- | Parse the given character, or the same character in another case
+     (upper or lower). -}
+caseInsensitiveChar ∷ Stream σ η Char ⇒ Char → ParsecT σ υ η Char
+caseInsensitiveChar c = do
+  _ ← char (toLower c) ∤ char (toUpper c)
+  return c
+
+-- | Parse the given string, but with any combination of upper and lower case
+-- characters.
+caseInsensitiveString ∷ Stream σ η Char ⇒ String → ParsecT σ υ η String
+caseInsensitiveString = sequence ∘ fmap caseInsensitiveChar
 
 -- that's all, folks! ---------------------------------------------------------

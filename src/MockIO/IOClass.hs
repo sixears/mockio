@@ -1,13 +1,19 @@
-{-# LANGUAGE UnicodeSyntax #-}
-{-# LANGUAGE ViewPatterns  #-}
+{-# LANGUAGE MonadComprehensions #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE UnicodeSyntax       #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module MockIO.IOClass
-  ( HasIOClass( ioClass ), IOClass(..), ioClasses, isExternalIO, isInternalIO )
+  ( HasIOClass( ioClass ), IOClass(..), IOClassSet
+  , ioClasses, isExternalIO, isInternalIO )
 where
+
+import GHC.Exts  ( IsList( Item, fromList, toList ) )
 
 -- base --------------------------------
 
-import Data.Char  ( toLower )
+import Data.Char           ( toLower )
+import Data.List.NonEmpty  ( NonEmpty( (:|) ) )
 
 -- base-unicode-symbols ----------------
 
@@ -32,8 +38,23 @@ import Control.Lens  ( Lens' )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Bool  ( 𝔹 )
-import Data.MoreUnicode.Lens  ( (⊣) )
+import Data.MoreUnicode.Applicative  ( (⋪), (⋫), (∤) )
+import Data.MoreUnicode.Bool         ( 𝔹 )
+import Data.MoreUnicode.Functor      ( (⊳) )
+import Data.MoreUnicode.Lens         ( (⊣) )
+
+-- parsec ------------------------------
+
+import Text.Parsec.Char        ( char, string )
+import Text.Parsec.Combinator  ( sepBy )
+
+-- parsec-plus -------------------------
+
+import ParsecPlus2  ( Parsecable( parser ), caseInsensitiveString )
+
+-- parser-plus -------------------------
+
+import ParserPlus  ( tries )
 
 -- tasty-plus --------------------------
 
@@ -42,6 +63,10 @@ import TastyPlus.Equish  ( Equish( (≃) ) )
 -- text-printer ------------------------
 
 import qualified  Text.Printer  as  P
+
+-- tfmt --------------------------------
+
+import Text.Fmt  ( fmt )
 
 --------------------------------------------------------------------------------
 
@@ -58,19 +83,36 @@ data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
   -- ordering is not relevant, we just derive it to support Set
   deriving (Eq,Ord,Show)
 
-ioClasses ∷ Set.Set IOClass
-ioClasses = Set.fromList [ IORead, IOWrite, IOCmdR, IOCmdW, IOExec, NoIO ]
+newtype IOClassSet = IOClassSet { unIOClassSet ∷ Set.Set IOClass }
+  deriving (Eq, Show)
 
-instance Read IOClass where
-  readsPrec _ (fmap toLower → "ioread")      = [(IORead  ,"")]
-  readsPrec _ (fmap toLower → "iowrite")     = [(IOWrite ,"")]
-  readsPrec _ (fmap toLower → "iocmdr")      = [(IOCmdR  ,"")]
-  readsPrec _ (fmap toLower → "iocmdread")   = [(IOCmdR  ,"")]
-  readsPrec _ (fmap toLower → "iocmdw")      = [(IOCmdW  ,"")]
-  readsPrec _ (fmap toLower → "iocmdwrite")  = [(IOCmdW  ,"")]
-  readsPrec _ (fmap toLower → "ioexec")      = [(IOExec  ,"")]
-  readsPrec _ (fmap toLower → "noio")        = [(NoIO    ,"")]
-  readsPrec _ _                              = []
+instance IsList IOClassSet where
+  -- requirement is that fromList ∘ toList = id (not the other way round)
+  type Item IOClassSet = IOClass
+  fromList = IOClassSet ∘ Set.fromList
+  toList   = Set.toList ∘ unIOClassSet
+
+instance Printable IOClassSet where
+  print (toList → iocs) = P.text $ [fmt|«%L»|] iocs
+
+instance Parsecable IOClassSet where
+  parser = fromList ⊳ (parser `sepBy` (char ','))
+
+ioClasses ∷ IOClassSet
+ioClasses =
+  IOClassSet $ Set.fromList [ IORead, IOWrite, IOCmdR, IOCmdW, IOExec, NoIO ]
+
+instance Parsecable IOClass where
+  parser = let strs =    ("IORead"     , IORead)
+                    :| [ ("IOWrite"    , IOWrite)
+                       , ("IOCmdRead"  , IOCmdR)
+                       , ("IOCmdR"     , IOCmdR)
+                       , ("IOCmdWrite" , IOCmdW)
+                       , ("IOCmdW"     , IOCmdW)
+                       , ("IOExec"     , IOExec)
+                       , ("NoIO"       , NoIO)
+                       ]
+            in tries [ caseInsensitiveString st ⋫ return ioc | (st,ioc) ← strs]
 
 instance Default IOClass where
   def = NoIO

@@ -7,23 +7,21 @@
 {-# LANGUAGE UnicodeSyntax          #-}
 
 module StdMain.StdOptions
-  ( DryRunLevel, HasDryRun, HasDryRunLevel( dryRunLevel, level ), StdOptions
-  , dryRunOff, dryRunOn, dryRunP, dryRun1P, dryRun2P
+  ( DryRunLevel, HasDryRun, HasDryRunLevel( dryRunLevel, level )
+  , ReadDryRunLevel, StdOptions
+  , askDryRunL, dryRunOff, dryRunOn, dryRunP, dryRun1P, dryRun2P
   , ifDryRun, ifDryRunEq, ifDryRunGE, options, parseStdOptions, unlessDryRunGE
   )
 where
 
-import Prelude  ( (-), error, maxBound, minBound, pred, succ )
+import Prelude  ( pred, succ )
 
 -- base --------------------------------
 
-import Control.Applicative  ( many )
-import Data.Bool            ( Bool( True, False ), otherwise )
-import Data.Foldable        ( foldr )
-import Data.Function        ( ($),  const, id )
-import Data.Maybe           ( fromMaybe )
-import Data.Ord             ( (>) )
-import Text.Show            ( Show( show ) )
+import Data.Bool      ( Bool )
+import Data.Foldable  ( foldr )
+import Data.Function  ( ($),  const, id )
+import Text.Show      ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
@@ -48,19 +46,22 @@ import Control.Monad.Log  ( Severity( Debug, Warning ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∤), (⊳), (⊵), ℕ )
+import Data.MoreUnicode  ( (∤), (⊳), (⊵), 𝔹, ℕ )
+
+-- mtl ---------------------------------
+
+import Control.Monad.Reader  ( MonadReader, ask )
 
 -- natural-plus ------------------------
 
 import Natural  ( AtMost( Cons, Nil ), Countable( count ), Nat( S ), Natty
-                , One, Two, atMost, atMostOne, atMostTwo, count, four, length
-                , replicate, three
+                , One, Two, atMost, atMostOne, atMostTwo, count, four, replicate
+                , three
                 )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( FlagFields, Mod, Parser
-                            , flag', help, long, optional, short )
+import Options.Applicative  ( FlagFields, Mod, Parser, flag', help, long,short )
 
 -- optparse-plus -------------------------
 
@@ -112,6 +113,13 @@ type HasDryRun = HasDryRunLevel One
 instance Countable (DryRunLevel ν) where
   count (DryRunLevel n) = count n
 
+------------------------------------------------------------
+
+type ReadDryRunLevel ν η = MonadReader (DryRunLevel ν) η
+
+askDryRunL ∷ ReadDryRunLevel ν η ⇒ η (DryRunLevel ν)
+askDryRunL = ask
+
 ----------------------------------------
 
 dryRunLvl' ∷ DryRunLevel n → ℕ
@@ -120,17 +128,20 @@ dryRunLvl' (DryRunLevel d) = count d
 dryRunLvl ∷ HasDryRunLevel n s ⇒ s → ℕ
 dryRunLvl = dryRunLvl' ∘ view dryRunLevel
 
-ifDryRunEq ∷ HasDryRunLevel n h ⇒ ℕ → h → a → a → a
-ifDryRunEq i a = ifThenElse (dryRunLvl a ≡ i)
+ifDryRunP ∷ ReadDryRunLevel ν η ⇒ (ℕ → 𝔹) → α → α → η α
+ifDryRunP f go nogo = (\ drl → ifThenElse (f (dryRunLvl drl)) go nogo) ⊳ ask
+  
+ifDryRunEq ∷ ReadDryRunLevel ν η ⇒ ℕ → α → α → η α
+ifDryRunEq i = ifDryRunP (≡ i)
 
-ifDryRunGE ∷ HasDryRunLevel n h ⇒ ℕ → h → a → a → a
-ifDryRunGE i a = ifThenElse (dryRunLvl a ≥ i)
+ifDryRunGE ∷ ReadDryRunLevel ν η ⇒ ℕ → α → α → η α
+ifDryRunGE i = ifDryRunP (≥ i)
 
-ifDryRun ∷ HasDryRunLevel n h ⇒ h → a → a → a
+ifDryRun ∷ ReadDryRunLevel ν η ⇒ α → α → η α
 ifDryRun = ifDryRunGE 1
 
-unlessDryRunGE ∷ HasDryRunLevel n h ⇒ ℕ → h → a → a → a
-unlessDryRunGE i a d n = ifDryRunGE i a n d
+unlessDryRunGE ∷ ReadDryRunLevel ν η ⇒ ℕ → α → α → η α
+unlessDryRunGE i d n = ifDryRunGE i n d
 
 ----------------------------------------
 
@@ -187,39 +198,19 @@ options = lens _nonBaseOptions
 
 parseStdOptions ∷ Natty ν → Parser α → Parser (StdOptions ν α)
 parseStdOptions n p =
-  let countF m = length ⊳ many (flag' () m)
-      -- up to n flags, each invoking an instance of a function
+  let -- up to n flags, each invoking an instance of a function
       flagn ∷ Natty ν → Mod FlagFields () → (α → α) → α → Parser α
       flagn i m f a =
         (\ c → foldr ($) a (replicate (count c) f)) ⊳ atMost i (flag' () m)
       flagsev ∷ Natty ν → Mod FlagFields () → (Severity → Severity)
               → Parser VerboseOptions
-      flagsev i m f = defVOpts ⊳ flagn i m f Warning
+      flagsev i m f = defVOpts ⊳ flagn i m f defaultSev
       flagv         = flagsev three (short 'v') succ
       flagq         = flagsev four (long "quiet") pred
- --silent
       flagd         = defVOpts ⊳ flag' Debug (long "debug")
-      vs_qs   = verbosityLevel ⊳ (countF (short 'v')) ⊵ (countF (long "quiet"))
       verbose = parsecOption (long "verbose")
    in StdOptions ⊳ p
                  ⊵ (flagv ∤ flagq ∤ flagd ∤ verbose)
                  ⊵ dryRunP n
-
-----------------------------------------
-
-verbosityLevel ∷ ℕ → ℕ → Severity
-verbosityLevel v q =
-  let warnTooLow  x = [fmt|warning: attempt to exceed min verbosity level %w|] x
-      warnTooHigh x = [fmt|warning: attempt to exceed max verbosity level %w|] x
-      succs 0 x = x
-      succs n x | x ≡ maxBound = error (warnTooHigh x)
-                | otherwise    = succs (n-1) (succ x)
-      preds 0 x = x
-      preds n x | x ≡ minBound = error (warnTooLow x)
-                | otherwise    = preds (n-1) (pred x)
-      l = case v > q of
-            True  → succs (v-q) defaultSev
-            False → preds (q-v) defaultSev
-   in l
 
 -- that's all, folks! ----------------------------------------------------------

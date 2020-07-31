@@ -39,15 +39,16 @@ import MockIO  ( DoMock( DoMock, NoMock ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Lens  ( (⊣) )
+import Data.MoreUnicode.Lens   ( (⊣) )
 
 -- mtl ---------------------------------
 
 import Control.Monad.Except  ( ExceptT )
+import Control.Monad.Reader  ( ReaderT, runReaderT )
 
 -- natural-plus ------------------------
 
-import Natural  ( Natty, one )
+import Natural  ( Natty, One, one )
 
 -- optparse-applicative ----------------
 
@@ -82,9 +83,7 @@ stdMain_ ∷ ∀ ε α σ ω ν μ .
          → μ ()
 stdMain_ n desc p io = do
   o ← parseOpts Nothing desc (parseStdOptions n p)
-  Exited.doMain $ do
-    -- filt ← filterVerbosity o
-    logToStderr NoCallStack (filterMinSeverity o (io o))
+  Exited.doMain $ logToStderr NoCallStack (filterMinSeverity o (io o))
 
 ----------
 
@@ -108,21 +107,36 @@ stdMain ∷ ∀ ε α σ ω ν μ .
 stdMain n desc p io =
   stdMain_ n desc p (\ o → io (o ⊣ dryRunLevel) (o ⊣ options))
 
+type LogTIO ω ε = (LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)))
+
+stdMainx ∷ ∀ ε α σ ω ν μ .
+          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
+          Natty ν
+        → Text
+        → Parser α
+        → (α → ReaderT (DryRunLevel ν) (LogTIO ω ε) σ)
+        → μ ()
+stdMainx n desc p io =
+  stdMain_ n desc p (\ o → runReaderT (io (o ⊣ options)) (o ⊣ dryRunLevel))
+
 ----------
 
-{- | Simpler type-signature for stdMain', where the io is expected to return
-     `()`, the error is specifically a `UsageError`, and there is a single
-     dry-run level which is translated to DoMock/NoMock; intended for simple IO
-     programs.
- -}
+{- | More simpley-typed version of `stdMain`, where the error is specifically a
+     `UsageError`, and there is a single dry-run level which is translated to
+     DoMock/NoMock; intended for simple IO programs.
 
-stdMain' ∷ ∀ ε α ω μ .
-           (MonadIO μ, ε ~ UsageError) ⇒
+     Note that although the `io` arg. is typed to a `ReaderT`, much simpler
+     types - e.g., `MonadIO ⇒ μ ()`, or `MonadIO ⇒ μ ExitCode` - will suffice.
+ -}
+stdMain' ∷ ∀ ω ρ σ μ . (MonadIO μ, ToExitCode σ) ⇒
            Text
-         → Parser α
-         → (DoMock → α → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) ())
+         → Parser ρ
+         → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO ω UsageError) σ)
          → μ ()
-stdMain' desc p io =
-  stdMain one desc p (\ dr a → io (ifDryRun dr DoMock NoMock) a )
+stdMain' desc parser io =
+  let go opts = do
+        mock ← ifDryRun DoMock NoMock
+        io mock opts
+   in stdMainx @UsageError one desc parser go
 
 -- that's all, folks! ----------------------------------------------------------
