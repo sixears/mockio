@@ -10,22 +10,18 @@ where
 
 import GHC.Exts  ( fromList )
 
-import Prelude  ( enumFrom, undefined )
+import Prelude  ( enumFrom )
 
 -- base --------------------------------
 
-import Control.Applicative    ( many, some, pure )
-import Control.Monad          ( foldM, return, sequence )
+import Control.Applicative    ( some, pure )
+import Control.Monad          ( foldM, return )
 import Control.Monad.Fail     ( MonadFail( fail ) )
-import Data.Bifunctor         ( bimap, first )
 import Data.Char              ( Char, toLower )
-import Data.Either            ( Either )
 import Data.Eq                ( Eq )
-import Data.Foldable          ( foldl )
 import Data.Function          ( ($), id )
 import Data.Functor           ( fmap )
 import Data.Functor.Identity  ( Identity )
-import Data.List              ( intercalate )
 import Data.List.NonEmpty     ( NonEmpty( (:|) ) )
 import Data.Maybe             ( Maybe( Just, Nothing ), fromMaybe )
 import Data.String            ( String )
@@ -38,13 +34,6 @@ import Text.Show              ( Show( show ) )
 
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-
--- containers --------------------------
-
-import qualified  Data.Set         as  Set
-import qualified  Data.Map.Strict  as  Map
-
-import Data.Map.Strict  ( (!) )
 
 -- data-textual ------------------------
 
@@ -72,7 +61,7 @@ import Control.Monad.Log  ( Severity( Alert, Emergency, Notice ) )
 
 -- mockio ------------------------------
 
-import MockIO.IOClass  ( IOClass( IOCmdR, IOCmdW, IORead, IOWrite ), IOClassSet
+import MockIO.IOClass  ( IOClass( IOCmdW, IORead, IOWrite ), IOClassSet
                        , ioClasses )
 
 -- monaderror-io -----------------------
@@ -81,11 +70,7 @@ import MonadError2  ( mErrFail )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∈), (∤), (≫), (⊳), (⊵), (⋪), (⋫), ℕ )
-
--- mtl ---------------------------------
-
-import Control.Monad.Except  ( MonadError )
+import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋫), ℕ )
 
 -- natural-plus ------------------------
 
@@ -93,14 +78,14 @@ import Natural  ( toEnum )
 
 -- parsec -----------------------------
 
-import Text.Parsec.Char        ( alphaNum, char, letter, noneOf, oneOf, string )
+import Text.Parsec.Char        ( char, letter, noneOf, oneOf )
 import Text.Parsec.Combinator  ( between, option, optionMaybe, sepBy )
 import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, try )
 
 -- parsec-plus -------------------------
 
-import ParsecPlus2  ( Parsecable( parser, parsec ), ParseError
-                    , caseInsensitiveString, __parsecN__, uniquePrefix )
+import ParsecPlus2  ( Parsecable( parsec, parser ), ParseError
+                    , caseInsensitiveString, uniquePrefix )
 
 -- parser-plus -------------------------
 
@@ -121,8 +106,7 @@ import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP, runTestsReplay
 
 -- text --------------------------------
 
-import qualified  Data.Text  as  Text
-import Data.Text  ( Text, pack, splitOn, unpack )
+import Data.Text  ( Text, unpack )
 
 -- text-printer ------------------------
 
@@ -130,13 +114,7 @@ import qualified  Text.Printer  as  P
 
 -- tfmt --------------------------------
 
-import Text.Fmt  ( fmt, fmtT )
-
-------------------------------------------------------------
---                     local imports                      --
-------------------------------------------------------------
-
-import StdMain.UsageError   ( AsUsageError, UsageError, readUsage, throwUsage )
+import Text.Fmt  ( fmt )
 
 --------------------------------------------------------------------------------
 
@@ -148,14 +126,9 @@ instance Parsecable LogFile where
 
 ------------------------------------------------------------
 
-type TextMap    = Map.Map Text Text
-
-------------------------------------------------------------
-
 data VerboseOptions =
   VerboseOptions { _logSeverity   ∷ Severity -- ^ lowest passing severity
                  , _ioClassFilter ∷ IOClassSet
---                 , _config        ∷ TextMap
                  , _callstack     ∷ CSOpt
                  , _logFile       ∷ Maybe LogFile
                  }
@@ -188,15 +161,6 @@ defVOpts sev = VerboseOptions sev ioClasses NoCallStack Nothing
 
 ----------------------------------------
 
-parseKVs ∷ Stream σ η Char ⇒ ParsecT σ τ η (Text,[Text])
-parseKVs =
-  let comma  = string ","
-      identC = alphaNum ∤ oneOf "_-"
-   in bimap pack (fmap pack) ⊳
-        ((,) ⊳ some identC ⋪ char '=' ⊵ many identC `sepBy` comma)
-
-----------------------------------------
-
 data LogCfgElement = LogCfgIOClassSet IOClassSet | LogCfgCSOpt CSOpt
   deriving (Eq,Show)
 
@@ -225,96 +189,31 @@ parseElements lces = do
 
 
 newtype LogCfg = LogCfg { unLogCfg ∷ (IOClassSet,CSOpt) }
--- type LogCfg = (IOClassSet,CSOpt)
+  deriving (Eq, Show)
 type LogCfgY = (Maybe IOClassSet,Maybe CSOpt)
 
--- instance Parsecable LogCfg where
+----------------------------------------
+
 instance Parsecable LogCfg where
   parser = let braces = between (char '{') (char '}')
-            in option (LogCfg (ioClasses, NoCallStack)) $ braces $ parser `sepBy` char '^' ≫ parseElements
+            in option (LogCfg (ioClasses, NoCallStack)) ∘ braces $
+                 parser `sepBy` char '^' ≫ parseElements
 
                  
-
-{- Recursively parse a set of config pairs to a LogCfg. -}
-               
-{-
-parseCfgs__ ∷ (AsUsageError ε, MonadError ε η) ⇒
-              LogCfg → [(Text,Text)] → η (Maybe IOClassSet, Maybe CSOpt)
-parseCfgs__ (iocs{-,cfg-}) [] = return (iocs{-,cfg-})
-parseCfgs__ (iocs{-,cfg-}) ((Text.toLower → k,v) : more) =
-  let ioclasses = case iocs of
-                    Nothing    → do let class_txts = splitOn "," v
-                                    classes ← sequence $ readUsage ⊳ class_txts
-                                    let iocs' = Just $ Set.fromList classes
-                                    parseCfgs__ (iocs'{-, cfg-}) more
-                    Just iocs_ →  throwUsage $ e_iocs_defined iocs_
-   in case k of
-        "ioclass"   → ioclasses
-        "ioclasses" → ioclasses
-        _           → throwUsage $ [fmtT|unrecognized field %t|] k
-  where e_iocs_defined   iocs_ = [fmtT|IOClasses already defined: ⟨%L⟩|] iocs_
-
-----------
-
-parseCfgsTests ∷ TestTree
-parseCfgsTests =
-  let test name exp (input_texts, input_values) =
-        testCase name $
-          assertRight (exp @=?)(parseCfgs__ @UsageError input_values input_texts)
-      testErr name (input_texts, input_values) =
-        testCase name $
-          assertIsLeft (parseCfgs__ @UsageError input_values input_texts)
-      iocsText = pack $ intercalate "," (show ⊳ Set.toList ioClasses)
+parseLogCfgTests ∷ TestTree
+parseLogCfgTests =
+  let test ∷ (IOClassSet,CSOpt) → Text → TestTree
+      test exp txt = testCase (unpack txt) $
+        assertRight (@=? LogCfg exp) (parsec @_ @ParseError txt txt)
    in testGroup "parseCfgs"
-            [ test "empty" (Just ioClasses{-,Map.empty-})
-                           ([], (Just ioClasses{-,Map.empty-}))
-            , test "just one ioclass"
-                   (Just $ Set.fromList [IOCmdW]{-,Map.empty-})
-                   ([("ioClasses", "IOCmdW")],
-                   (Nothing{-,Map.empty-}))
-            , test "just ioclasses"
-                   (Just ioClasses{-,Map.empty-})
-                   ([("ioClasses", iocsText)], (Nothing{-,Map.empty-}))
-            , testErr "more ioclasses"
-                      ([("ioClasses", iocsText)], (Just Set.empty{-,Map.empty-}))
-            , test "foobar"
-                   (Nothing{-,Map.fromList [("foo","bar")]-})
-                   ([("foo","bar")], (Nothing{-,Map.empty-}))
-            , testErr "foobar again"
-                      ([("foo","bar")], (Nothing{-,Map.fromList [("foo","baz")]-}))
-            , test "ioclasses + config"
-                   (Just $ Set.fromList [IOCmdW,IOCmdR] {-,
-                    Map.fromList [("foo","bar"),("baz","quux")]-})
-                   ([ ("foo","bar")
-                    , ("ioclasses","IOCmdWrite,IOCmdR")
-                    , ("baz","quux") ], (Nothing{-,Map.empty-}))
+            [ test (ioClasses,NoCallStack) "{}"
+            , test (fromList [IOCmdW],NoCallStack) "{ioclass=iocmdw}"
+            , test (ioClasses,CallStackHead) "{csh}"
+            , test (fromList [IOWrite,IORead],CallStackHead)
+                   "{CSH^iOcLaSsEs=ioread,iow}"
+            , test (fromList [IOWrite,IORead],CallStackHead)
+                   "{CSH^iOcLaSsEs=iow,ioread}"
             ]
-
-----------------------------------------
-
-parseCfgs_ ∷ [(Text,Text)] → Either UsageError LogCfg
-parseCfgs_ = parseCfgs__ (Nothing{-,Map.empty-})
-
-----------------------------------------
-
--- parseCfgs  ∷ [(Text,Text)] → ParsecT σ τ η (IOClassSet {- , TextMap -})
--- parseCfgs = mErrFail ∘ fmap ({- first $ -} fromMaybe ioClasses) ∘ parseCfgs_
-
-----------------------------------------
-
-go ∷ [(Text,Text)] → ParsecT σ τ η (IOClassSet, CSOpt)
-go = mErrFail ∘ parseCfgs_
-
--}
-
-parseLogCfg ∷ Stream σ η Char ⇒ ParsecT σ τ η (IOClassSet, CSOpt)
-parseLogCfg = undefined
-{-
-  let parens open close p = char open ⋫ p ⋪ char close
-      braces = parens '{' '}'
-   in option (ioClasses, NoCallStack)
-             (braces (parseKV `sepBy` (char '^')) ≫ go)
--}
 
 ----------------------------------------
 
@@ -350,7 +249,7 @@ parseVerboseOptions =
   let colon = char ':'
       betwixt p = between p p
    in mkVerboseOptions ⊳ option Notice parsecSeverity
-                       ⊵ optionMaybe ((,) ⊳ (betwixt colon {- parseLogCfg -} parser)
+                       ⊵ optionMaybe ((,) ⊳ (betwixt colon parser)
                                           ⊵ optionMaybe parser)
 
 ----------
@@ -402,7 +301,7 @@ instance Parsecable VerboseOptions where
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
-tests = testGroup "VerboseOptions" [ {- parseCfgsTests, -} parseVerboseOptionsTests ]
+tests = testGroup "VerboseOptions" [ parseLogCfgTests,parseVerboseOptionsTests ]
 
 ----------------------------------------
 

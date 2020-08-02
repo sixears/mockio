@@ -112,16 +112,12 @@ import Data.MonoTraversable  ( Element
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (⋫), (∤) )
+import Data.MoreUnicode.Applicative  ( (⋫) )
 import Data.MoreUnicode.Bool         ( 𝔹 )
 import Data.MoreUnicode.Functor      ( (⊳), (⩺) )
 import Data.MoreUnicode.Lens         ( (⊣) )
 import Data.MoreUnicode.Monad        ( (⪼) )
 import Data.MoreUnicode.Natural      ( ℕ )
-
--- parsec ------------------------------
-
-import Text.Parsec.Char  ( string )
 
 -- parsec-plus -------------------------
 
