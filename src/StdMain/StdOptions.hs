@@ -205,9 +205,12 @@ parseStdOptions n p =
       flagsev ∷ Natty ν → Mod FlagFields () → (Severity → Severity)
               → Parser VerboseOptions
       flagsev i m f = defVOpts ⊳ flagn i m f defaultSev
-      flagv         = flagsev three (short 'v') succ
-      flagq         = flagsev four (long "quiet") pred
-      flagd         = defVOpts ⊳ flag' Debug (long "debug")
+      flagv         = flagsev three (short 'v' ⊕ help "Increase verbosity.")
+                              succ
+      flagq         = flagsev four (long "quiet" ⊕ help "Decrease verbosity.")
+                              pred
+      debug_help    = "Set verbosity to maximum"
+      flagd         = defVOpts ⊳ flag' Debug (long "debug" ⊕ help debug_help)
       verbose = parsecOption (long "verbose")
    in StdOptions ⊳ p
                  ⊵ (flagv ∤ flagq ∤ flagd ∤ verbose)

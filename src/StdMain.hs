@@ -13,12 +13,18 @@ where
 import Control.Exception       ( Exception )
 import Control.Monad.IO.Class  ( MonadIO )
 import Data.Function           ( ($) )
-import Data.Maybe              ( Maybe( Nothing ) )
+import Data.Maybe              ( Maybe( Just, Nothing ) )
+import Data.String             ( String, unwords, words ) 
 import System.IO               ( IO )
+
+-- base-unicode-symbols ----------------
+
+import Data.Function.Unicode  ( (∘) )
+import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable )
+import Data.Textual  ( Printable, toString )
 
 -- exited ------------------------------
 
@@ -39,7 +45,8 @@ import MockIO  ( DoMock( DoMock, NoMock ) )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Lens   ( (⊣) )
+import Data.MoreUnicode.Functor  ( (⊳) )
+import Data.MoreUnicode.Lens     ( (⊣) )
 
 -- mtl ---------------------------------
 
@@ -52,15 +59,20 @@ import Natural  ( Natty, One, one )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( Parser )
+import Options.Applicative  ( Parser, footerDoc, progDesc )
+import Options.Applicative.Help.Pretty  ( Doc
+                                        , (<+>)
+                                        , align, fillBreak, fillSep, hang, hardline
+                                        , indent, space, string, text, vcat
+                                        )
 
 -- optparse-plus -----------------------
 
-import OptParsePlus  ( parseOpts )
+import OptParsePlus2  ( parseOpts )
 
 -- text --------------------------------
 
-import Data.Text  ( Text )
+import Data.Text  ( Text, unpack )
 
 ------------------------------------------------------------
 --                     local imports                      --
@@ -69,6 +81,7 @@ import Data.Text  ( Text )
 import StdMain.StdOptions  ( DryRunLevel, HasDryRunLevel( dryRunLevel )
                            , StdOptions, ifDryRun, options, parseStdOptions )
 import StdMain.UsageError  ( AsUsageError, UsageError )
+import StdMain.VerboseOptions  ( verboseDesc )
 
 --------------------------------------------------------------------------------
 
@@ -82,7 +95,33 @@ stdMain_ ∷ ∀ ε α σ ω ν μ .
          → (StdOptions ν α → LoggingT (Log ω)(LoggingT (Log ω)(ExceptT ε IO)) σ)
          → μ ()
 stdMain_ n desc p io = do
-  o ← parseOpts Nothing desc (parseStdOptions n p)
+  let optionDesc ∷ String → [String] → Doc
+      optionDesc name descn =
+        let para = fillSep $ text ⊳ (words $ unwords descn)
+        in indent 2 (fillBreak 14 (string name) <+> (align para))
+      optionDesc' ∷ String → [Text] → Doc
+      optionDesc' name para =
+        indent 2 (fillBreak 14 (string name) <+> (align (fillSep $ text ∘ unpack ⊳ para)))
+      footerDesc ∷ Doc
+      footerDesc = vcat [ string "Standard options:"
+                        , optionDesc "-v" [ "Increase verbosity.  This may be"
+                                          , "used up to 3 times (which is "
+                                          , "equivalent to --debug); and is "
+                                          , "exclusive with --quiet, --debug, "
+                                          , "and --verbose."
+                                          ]
+                        , optionDesc "--quiet" [ "Decrease verbosity.  This "
+                                               , "may be used up to 4 times;"
+                                               , "and is exclusive with -v,"
+                                               , "--debug, and --verbose."
+                                               ]
+                        , optionDesc' "--verbose=OPTS" verboseDesc
+                        , optionDesc "--dry-run" [ "Do not make any changes; "
+                                                 , "just pretend."
+                                                 ]
+                        ]
+  o ← parseOpts Nothing (progDesc (toString desc) ⊕ footerDoc (Just footerDesc))
+                        (parseStdOptions n p)
   Exited.doMain $ logToStderr NoCallStack (filterMinSeverity o (io o))
 
 ----------

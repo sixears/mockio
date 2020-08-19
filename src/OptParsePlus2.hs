@@ -155,11 +155,13 @@ parseHelpWith f = HelpWith ⊳ f ⊵ flag NoHelp DoHelp (long "help")
      certainly not what was intended.
 -}
 parseOpts ∷ MonadIO μ ⇒ Maybe Text -- ^ program name (or uses `getProgName`)
-                      → Text       -- ^ brief program description
+                      -- | base infomod for parser; typically `progDesc
+                      --   "some description"`
+                      → InfoMod (HelpWith α)
                       → Parser α   -- ^ proggie opts parser
                       → μ α
-parseOpts progn descn prsr = liftIO $ do
-  let infoMod = fullDesc ⊕ progDesc (toString descn) ⊕ usageFailure
+parseOpts progn baseinfo prsr = liftIO $ do
+  let infoMod = fullDesc ⊕ baseinfo ⊕ usageFailure
       prsr'   = parseHelpWith prsr
   opts ← customExecParser parserPrefs (info prsr' infoMod)
   progn' ← flip fromMaybe progn ⊳ (pack ⊳ getProgName)

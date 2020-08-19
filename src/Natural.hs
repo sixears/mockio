@@ -6,11 +6,12 @@
 module Natural
   ( AtMost( Cons, Nil ), Countable( count ), Nat( S, Z ), Natty( Sy, Zy), None
   , ℕ
-  , atMost, atMostOne, atMostTwo, fromEnum, length, none, replicate, toEnum
+  , atMost, atMostOne, atMostTwo
   , zeroOneOrTwo
 
   , One, Two, Three, Four
-  , one, two, three, four
+  , none, one, two, three, four
+  , allEnum, fromEnum, length, replicate, toEnum
   )
 where
 
@@ -50,6 +51,9 @@ fromEnum = GHC.Real.fromIntegral ∘ GHC.Enum.fromEnum
 
 toEnum ∷ GHC.Enum.Enum α ⇒ ℕ → α
 toEnum = GHC.Enum.toEnum ∘ GHC.Num.fromInteger ∘ GHC.Real.toInteger
+
+allEnum ∷ GHC.Enum.Enum α ⇒ [α]
+allEnum = GHC.Enum.enumFrom (toEnum 0)
 
 replicate ∷ ℕ → α → [α]
 replicate = Data.List.replicate ∘ GHC.Real.fromIntegral

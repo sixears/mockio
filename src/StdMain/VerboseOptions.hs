@@ -1,11 +1,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE UnicodeSyntax              #-}
 {-# LANGUAGE ViewPatterns               #-}
 
 module StdMain.VerboseOptions
-  ( LogFile, HasVerboseOptions( verboseOptions ), VerboseOptions, defVOpts )
+  ( LogFile, HasVerboseOptions( verboseOptions ), VerboseOptions
+  , defVOpts, verboseDesc )
 where
 
 import GHC.Exts  ( fromList )
@@ -37,7 +40,7 @@ import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ) )
+import Data.Textual  ( Printable( print ), toText )
 
 -- fpath -------------------------------
 
@@ -57,7 +60,7 @@ import Log.HasSeverity  ( HasSeverity( severity ) )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( Severity( Alert, Emergency, Notice ) )
+import Control.Monad.Log  ( Severity( Alert, Emergency, Warning, Notice ) )
 
 -- mockio ------------------------------
 
@@ -68,13 +71,21 @@ import MockIO.IOClass  ( IOClass( IOCmdW, IORead, IOWrite ), IOClassSet
 
 import MonadError2  ( mErrFail )
 
+-- monadio-plus ------------------------
+
+import MonadIO.File2  ( fWritable )
+
 -- more-unicode ------------------------
 
 import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋫), ℕ )
 
 -- natural-plus ------------------------
 
-import Natural  ( toEnum )
+import Natural  ( allEnum, toEnum )
+
+-- optparse-applicative ----------------
+
+import Options.Applicative.Help.Pretty  ( Doc, fillSep, text )
 
 -- parsec -----------------------------
 
@@ -106,7 +117,7 @@ import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP, runTestsReplay
 
 -- text --------------------------------
 
-import Data.Text  ( Text, unpack )
+import Data.Text  ( Text, intercalate, pack, unpack, words )
 
 -- text-printer ------------------------
 
@@ -122,7 +133,17 @@ newtype LogFile = LogFile File
   deriving (Eq,Printable,Show)
 
 instance Parsecable LogFile where
-  parser = LogFile ⊳ (some (noneOf "\0") ≫ mErrFail ∘ parse')
+--  parser = LogFile ⊳ (some (noneOf "\0") ≫ mErrFail ∘ parse')
+  parser = LogFile ⊳ do
+    fn ← some (noneOf "\0")
+    mErrFail $ parse' fn
+{-
+  parser = LogFile ⊳ do
+    fn ← some (noneOf "\0")
+    f ∷ File ← parse' fn
+--     fWritable f ≫ \ case Nothing → fail "bye"
+    return f
+-}
 
 ------------------------------------------------------------
 
@@ -169,8 +190,6 @@ instance Parsecable LogCfgElement where
                ioc_tag = tries $ ciString "ioclasses" :| [ ciString "ioclass" ]
             in LogCfgCSOpt ⊳ parser
              ∤ LogCfgIOClassSet ⊳ (ioc_tag ⋫ char '=' ⋫ parser)
-
-
 
 parseElements ∷ MonadFail η ⇒ [LogCfgElement] → η LogCfg
 parseElements lces = do
@@ -244,13 +263,28 @@ mkVerboseOptions sev c =
 
 ----------------------------------------
 
+defSeverity ∷ Severity
+defSeverity = Notice
+
 parseVerboseOptions ∷ ∀ σ η . Stream σ Identity Char ⇒ Parsec σ η VerboseOptions
 parseVerboseOptions =
   let colon = char ':'
       betwixt p = between p p
-   in mkVerboseOptions ⊳ option Notice parsecSeverity
+   in mkVerboseOptions ⊳ option defSeverity parsecSeverity
                        ⊵ optionMaybe ((,) ⊳ (betwixt colon parser)
                                           ⊵ optionMaybe parser)
+
+{- | --verbose description, for user help, as a list of words -}
+verboseDesc ∷ [Text]
+verboseDesc = [ "Detailed setting of verbosity."
+              , "The general form of OPTS is LEVEL:CONFIG:FILE; where LEVEL"
+              , "is a verbosity level."
+              , "The default verbosity level is", pack (show defSeverity) ⊕ "."
+              , "Available verbosity levels are"
+              , intercalate ", " (pack ∘ show ⊳ allEnum @Severity) ⊕ "."
+              , "Any unique prefix of a verbosity level, case-insensitive, is"
+              , "accepted."
+              ] ≫ words
 
 ----------
 
@@ -269,25 +303,28 @@ parseVerboseOptionsTests =
             , test (VerboseOptions Alert ioClasses NoCallStack (Just tmplog))
                    -- check case-random prefix of 'alert'
                    "aL::/tmp/log"
+            , test (VerboseOptions Warning ioClasses NoCallStack Nothing)
+                   "warn"
             , test (VerboseOptions Alert (fromList [IOWrite]) NoCallStack
                                    (Just logtmp))
                    "1:{ioclasses=iowrite}:log:tmp"
             , testErr "1:deliberately!!bad:log:tmp"
-            , test (VerboseOptions Notice ioClasses NoCallStack (Just tmplog))
+            , test (VerboseOptions defSeverity ioClasses NoCallStack
+                                   (Just tmplog))
                    "::/tmp/log"
-            , test (VerboseOptions Notice (fromList [IORead]) NoCallStack
+            , test (VerboseOptions defSeverity (fromList [IORead]) NoCallStack
                                    (Just tmplog))
                    ":{IOCLASS=ioRead}:/tmp/log"
-            , test (VerboseOptions Notice (fromList [IOCmdW]) NoCallStack
+            , test (VerboseOptions defSeverity (fromList [IOCmdW]) NoCallStack
                                    Nothing)
                    ":{ioclass=IOCMDW}:"
-            , test (VerboseOptions Notice (fromList [IOCmdW]) CallStackHead
+            , test (VerboseOptions defSeverity (fromList [IOCmdW]) CallStackHead
                                    Nothing)
                    ":{cshead^ioclass=IOCMDW}:"
-            , test (VerboseOptions Notice (fromList [IOCmdW]) FullCallStack
+            , test (VerboseOptions defSeverity (fromList [IOCmdW]) FullCallStack
                                    Nothing)
                    ":{ioclass=IOCMDW^CallStack}:"
-            , test (VerboseOptions Notice ioClasses CallStackHead Nothing)
+            , test (VerboseOptions defSeverity ioClasses CallStackHead Nothing)
                    ":{cshead}:"
             ]
 
