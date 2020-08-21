@@ -12,6 +12,7 @@ where
 
 import Control.Exception       ( Exception )
 import Control.Monad.IO.Class  ( MonadIO )
+import Data.Foldable           ( and )
 import Data.Function           ( ($) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String, unwords, words ) 
@@ -19,8 +20,14 @@ import System.IO               ( IO )
 
 -- base-unicode-symbols ----------------
 
+import Data.Bool.Unicode      ( (∧) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
+import Data.Ord.Unicode       ( (≥) )
+
+-- containers --------------------------
+
+import Data.Set  ( fromList, member )
 
 -- data-textual ------------------------
 
@@ -31,17 +38,36 @@ import Data.Textual  ( Printable, toString )
 import qualified  Exited2  as  Exited
 import Exited2  ( ToExitCode )
 
+-- lens --------------------------------
+
+import Control.Lens.Getter  ( view )
+
 -- log-plus ----------------------------
 
-import Log  ( CSOpt( NoCallStack ), Log, filterMinSeverity, logToStderr )
+import Log              ( CSOpt( NoCallStack ), Log, filterLog, filterLog'
+                        , filterMinSeverity, filterSeverity, logToFile
+                        , logToStderr
+                        )
+import Log.LogEntry     ( attrs )
+import Log.HasSeverity  ( severity )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT )
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug ) )
 
 -- mockio ------------------------------
 
-import MockIO  ( DoMock( DoMock, NoMock ) )
+import MockIO          ( DoMock( DoMock, NoMock ) )
+import MockIO.IOClass  ( HasIOClass, IOClass( IORead, IOWrite )
+                       , (∈), ioClass, member )
+
+-- monaderror-io -----------------------
+
+import MonadError.IO.Error  ( AsIOError )
+
+-- monadio-plus ------------------------
+
+import MonadIO.File2  ( IOMode( WriteMode ), withFile, withFileT )
 
 -- more-unicode ------------------------
 
@@ -78,17 +104,21 @@ import Data.Text  ( Text, unpack )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import StdMain.StdOptions  ( DryRunLevel, HasDryRunLevel( dryRunLevel )
-                           , StdOptions, ifDryRun, options, parseStdOptions )
-import StdMain.UsageError  ( AsUsageError, UsageError )
-import StdMain.VerboseOptions  ( verboseDesc )
+import StdMain.StdOptions      ( DryRunLevel, HasDryRunLevel( dryRunLevel )
+                               , StdOptions
+                               , ifDryRun, options, parseStdOptions
+                               )
+import StdMain.UsageError      ( AsUsageError, UsageError, UsageIOError )
+import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
+                               , verboseDesc, verboseOptions )
 
 --------------------------------------------------------------------------------
 
 {- | Like `stdMain`, but gives the incoming `io` full access to the `StdOptions`
      object. -}
 stdMain_ ∷ ∀ ε α σ ω ν μ .
-           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
+           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
+            ToExitCode σ, HasIOClass ω) ⇒
            Natty ν
          → Text
          → Parser α
@@ -122,7 +152,29 @@ stdMain_ n desc p io = do
                         ]
   o ← parseOpts Nothing (progDesc (toString desc) ⊕ footerDoc (Just footerDesc))
                         (parseStdOptions n p)
-  Exited.doMain $ logToStderr NoCallStack (filterMinSeverity o (io o))
+  let vopts = o ⊣ verboseOptions
+      ioClasses = vopts ⊣ ioClassFilter
+      sevOpt    = o ⊣ severity
+      filter    = filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
+                                        , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
+                             (io o)
+-- severity Y
+-- classfilter X
+-- callstack Y
+-- logfile Y
+  -- DESCRIPTION
+  -- filterLog (\ w → w ⊣ ioClass ≡ IORead)
+  Exited.doMain $
+    case vopts ⊣ logFile of
+      Nothing    → logToStderr (vopts ⊣ csopt) filter -- (filterMinSeverity o (io o))
+      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h → 
+                     logToFile (vopts ⊣ csopt) h filter -- (filterMinSeverity o (io o))
+
+xx ∷ (MonadLog (Log s) η, HasIOClass s) ⇒ LoggingT (Log s) η σ → η σ
+xx = filterLog (\ w → (w ⊣ ioClass) `Data.Set.member` (Data.Set.fromList [IORead,IOWrite]))
+
+yy ∷ MonadLog (Log ω) η ⇒ LoggingT (Log ω) η σ → η σ
+yy = filterMinSeverity Debug
 
 ----------
 
@@ -136,7 +188,8 @@ stdMain_ n desc p io = do
      though quite honestly, I couldn't say why the double `Logging`.
  -}
 stdMain ∷ ∀ ε α σ ω ν μ .
-          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
+          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
+           ToExitCode σ, HasIOClass ω) ⇒
           Natty ν
         → Text
         → Parser α
@@ -149,7 +202,8 @@ stdMain n desc p io =
 type LogTIO ω ε = (LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)))
 
 stdMainx ∷ ∀ ε α σ ω ν μ .
-          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, ToExitCode σ) ⇒
+          (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
+           ToExitCode σ, HasIOClass ω) ⇒
           Natty ν
         → Text
         → Parser α
@@ -161,21 +215,21 @@ stdMainx n desc p io =
 ----------
 
 {- | More simpley-typed version of `stdMain`, where the error is specifically a
-     `UsageError`, and there is a single dry-run level which is translated to
+     `UsageIOError`, and there is a single dry-run level which is translated to
      DoMock/NoMock; intended for simple IO programs.
 
      Note that although the `io` arg. is typed to a `ReaderT`, much simpler
      types - e.g., `MonadIO ⇒ μ ()`, or `MonadIO ⇒ μ ExitCode` - will suffice.
  -}
-stdMain' ∷ ∀ ω ρ σ μ . (MonadIO μ, ToExitCode σ) ⇒
+stdMain' ∷ ∀ ω ρ σ μ . (MonadIO μ, ToExitCode σ, HasIOClass ω) ⇒
            Text
          → Parser ρ
-         → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO ω UsageError) σ)
+         → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO ω UsageIOError) σ)
          → μ ()
 stdMain' desc parser io =
   let go opts = do
         mock ← ifDryRun DoMock NoMock
         io mock opts
-   in stdMainx @UsageError one desc parser go
+   in stdMainx one desc parser go
 
 -- that's all, folks! ----------------------------------------------------------

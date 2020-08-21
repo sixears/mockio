@@ -6,7 +6,7 @@
 
 module MockIO.IOClass
   ( HasIOClass( ioClass ), IOClass(..), IOClassSet
-  , ioClasses, isExternalIO, isInternalIO )
+  , (∈), ioClasses, isExternalIO, isInternalIO, member )
 where
 
 import GHC.Exts  ( IsList( Item, fromList, toList ) )
@@ -168,6 +168,12 @@ isInternalIO = not ∘ isExternalIO
 
 newtype IOClassSet = IOClassSet { unIOClassSet ∷ Set.Set IOClass }
   deriving (Eq, Show)
+
+member ∷ IOClass → IOClassSet → 𝔹
+member ioc (IOClassSet iocs) = ioc `Set.member` iocs
+
+(∈) ∷ IOClass → IOClassSet → 𝔹
+(∈) = member
 
 ----------
 

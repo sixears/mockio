@@ -82,7 +82,7 @@ import Log.HasUTCTime    ( HasUTCTimeY( utcTimeY ) )
 
 --------------------------------------------------------------------------------
 
-{- | Log with timestamp, callstack, severity & IOClass -}
+{- | A single log entry with timestamp, callstack, severity. -}
 data LogEntry ω = LogEntry { _callstack ∷ CallStack
                            , _timestamp ∷ Maybe UTCTime
                            , _severity  ∷ Severity

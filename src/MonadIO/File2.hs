@@ -8,6 +8,8 @@
 
 module MonadIO.File2
   ( hClose
+  , withFile, withFileT, System.IO.IOMode(..)
+
   , access, stat, writable
 
   , fileWritable
@@ -18,6 +20,7 @@ module MonadIO.File2
 
   , getContentsUTF8Lenient, hGetContentsUTF8Lenient, readFileUTF8Lenient
   , readFUTF8Lenient
+
   )
 where
 
@@ -27,7 +30,7 @@ import Debug.Trace  ( trace, traceShow )
 
 import qualified  System.IO
 
-import Control.Monad           ( return )
+import Control.Monad           ( join, return )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Bool               ( Bool( False, True ), bool )
 import Data.Either             ( Either( Right ) )
@@ -39,7 +42,7 @@ import Data.String             ( String )
 import System.Exit             ( ExitCode )
 import System.IO               ( FilePath, Handle, IO
                                , IOMode( ReadMode, WriteMode )
-                               , hSetEncoding, stdin, utf8, withFile
+                               , hSetEncoding, stdin, utf8
                                )
 import Text.Show               ( Show )
 
@@ -88,7 +91,7 @@ import Data.MoreUnicode.Natural  ( ℕ )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( MonadError )
+import Control.Monad.Except  ( ExceptT, MonadError )
 
 -- tasty -------------------------------
 
@@ -161,8 +164,8 @@ fexistsTests =
  -}
 fexists' ∷ (MonadIO μ, AsIOError ε, MonadError ε μ, AsFilePath τ)⇒ τ → μ FExists
 -- fileExist throws an InappropriateType IOException if you ask about a file
--- in a non-existent directory.  I think that sucks, and should be a simple
--- False (NoFExists)
+-- in a directory that is in reality a file.  I think that sucks, and should be
+-- a simple False (NoFExists)
 fexists' f = fromMaybe NoFExists ⩺ squashInappropriateTypeT ∘ asIOError $
                bool NoFExists FExists ⊳ fileExist (exterminate $ f ⫥ filepath)
 
@@ -188,7 +191,11 @@ fexists'Tests =
 stat ∷ ∀ ε ρ μ . (MonadIO μ, AsFilePath ρ, AsIOError ε, MonadError ε μ) ⇒
        ρ → μ (Maybe FileStatus)
 stat f = do
- fexists' f ≫ \ case
+  -- The fexists' introduces a race-condition - bah - but without it, the
+  -- stat may fail with an `InappropriateType` IOException when trying to stat
+  -- a file in a "directory" that is in reality a file.  I think that sucks, and
+  -- want to try that like any other non-existent file.
+  fexists' f ≫ \ case
     NoFExists → return Nothing
     FExists   → asIOErrorY ∘ getFileStatus ∘ exterminate $ (f ⫥ filepath)
     
@@ -211,6 +218,17 @@ statTests =
 
 ----------------------------------------
 
+withFile ∷ (MonadIO μ, IsFile π, AsIOError ε, MonadError ε μ) ⇒
+           π → IOMode → (Handle → IO ω) → μ ω
+withFile fn mode io = asIOError $ System.IO.withFile (fn ⫥ filepath) mode io
+
+withFileT ∷ (MonadIO μ, IsFile π, AsIOError ε, MonadError ε μ) ⇒
+           π → IOMode → (Handle → ExceptT ε IO ω) → μ ω
+withFileT fn mode io =
+  join ∘ asIOError $ System.IO.withFile (fn ⫥ filepath) mode (\ h → ѥ (io h))
+
+----------------------------------------
+
 -- cribbed shamelessly from RIO.Prelude.IO
 
 {- | Read a file in UTF8 encoding using OS-specific line-ending handling.
@@ -218,7 +236,7 @@ statTests =
  -}
 readFileUTF8 ∷ (AsIOError ε, MonadError ε μ, MonadIO μ) ⇒ File → μ Text
 readFileUTF8 fn =
-  asIOError $ withFile (fn ⫥ filepath) ReadMode $ \ h → do
+  withFile fn ReadMode $ \ h → do
     hSetEncoding h utf8
     TextIO.hGetContents h
 
@@ -301,7 +319,7 @@ readHandleBinary = asIOError ∘ liftIO ∘ BS.hGetContents
 writeFileUTF8 ∷ (AsIOError ε, MonadError ε μ, MonadIO μ) ⇒
                 File → Text → μ ()
 writeFileUTF8 fn text =
-  asIOError $ withFile (fn ⫥ filepath) WriteMode $ \h → do
+  withFile fn WriteMode $ \h → do
     hSetEncoding h utf8
     TextIO.hPutStr h text
 

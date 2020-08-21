@@ -101,6 +101,11 @@ main = -- XXX Tidy This Up
        -- XXX compress main, xx
        -- decent help texts for std options, particualrly --verbose with all its
        -- ioclasses, etc.
+       -- make {} in verbose options optional (if ':' not used within); use + to separate
+       -- add 'append' to log file options
+       -- better emsg for failing to open log file
+       -- add ioclass to log message
+       -- log rolling!
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
 go ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒

@@ -7,8 +7,8 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module StdMain.VerboseOptions
-  ( LogFile, HasVerboseOptions( verboseOptions ), VerboseOptions
-  , defVOpts, verboseDesc )
+  ( LogFile( unLogFile ), HasVerboseOptions( verboseOptions ), VerboseOptions
+  , csopt, defVOpts, ioClassFilter, logFile, verboseDesc )
 where
 
 import GHC.Exts  ( fromList )
@@ -45,7 +45,7 @@ import Data.Textual  ( Printable( print ), toText )
 -- fpath -------------------------------
 
 import FPath.AbsFile    ( absfile )
-import FPath.File       ( File( FileA, FileR ) )
+import FPath.File2      ( File( FileA, FileR ) )
 import FPath.Parseable  ( parse' )
 import FPath.RelFile    ( relfile )
 
@@ -70,10 +70,6 @@ import MockIO.IOClass  ( IOClass( IOCmdW, IORead, IOWrite ), IOClassSet
 -- monaderror-io -----------------------
 
 import MonadError2  ( mErrFail )
-
--- monadio-plus ------------------------
-
-import MonadIO.File2  ( fWritable )
 
 -- more-unicode ------------------------
 
@@ -129,21 +125,13 @@ import Text.Fmt  ( fmt )
 
 --------------------------------------------------------------------------------
 
-newtype LogFile = LogFile File
+newtype LogFile = LogFile { unLogFile ∷ File }
   deriving (Eq,Printable,Show)
 
 instance Parsecable LogFile where
---  parser = LogFile ⊳ (some (noneOf "\0") ≫ mErrFail ∘ parse')
   parser = LogFile ⊳ do
     fn ← some (noneOf "\0")
     mErrFail $ parse' fn
-{-
-  parser = LogFile ⊳ do
-    fn ← some (noneOf "\0")
-    f ∷ File ← parse' fn
---     fWritable f ≫ \ case Nothing → fail "bye"
-    return f
--}
 
 ------------------------------------------------------------
 
@@ -179,6 +167,21 @@ instance HasSeverity VerboseOptions where
 
 defVOpts ∷ Severity → VerboseOptions
 defVOpts sev = VerboseOptions sev ioClasses NoCallStack Nothing
+
+----------------------------------------
+
+logFile ∷ Lens' VerboseOptions (Maybe LogFile)
+logFile = lens _logFile (\ o l → o { _logFile = l })
+
+----------------------------------------
+
+csopt ∷ Lens' VerboseOptions CSOpt
+csopt = lens _callstack (\ o c → o { _callstack = c })
+
+----------------------------------------
+
+ioClassFilter ∷ Lens' VerboseOptions IOClassSet
+ioClassFilter = lens _ioClassFilter (\ o iocs → o { _ioClassFilter = iocs })
 
 ----------------------------------------
 
