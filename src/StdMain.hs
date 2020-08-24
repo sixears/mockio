@@ -14,9 +14,11 @@ import Control.Exception       ( Exception )
 import Control.Monad.IO.Class  ( MonadIO )
 import Data.Foldable           ( and )
 import Data.Function           ( ($) )
+import Data.Functor            ( fmap )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String, unwords, words ) 
 import System.IO               ( IO )
+import Text.Show               ( show )
 
 -- base-unicode-symbols ----------------
 
@@ -81,15 +83,16 @@ import Control.Monad.Reader  ( ReaderT, runReaderT )
 
 -- natural-plus ------------------------
 
-import Natural  ( Natty, One, one )
+import Natural  ( Natty, One, one, count )
 
 -- optparse-applicative ----------------
 
 import Options.Applicative  ( Parser, footerDoc, progDesc )
 import Options.Applicative.Help.Pretty  ( Doc
                                         , (<+>)
-                                        , align, fillBreak, fillSep, hang, hardline
-                                        , indent, space, string, text, vcat
+                                        , align, fillBreak, fillSep, hang
+                                        , hardline, indent, space, string, text
+                                        , vcat
                                         )
 
 -- optparse-plus -----------------------
@@ -128,28 +131,51 @@ stdMain_ n desc p io = do
   let optionDesc ∷ String → [String] → Doc
       optionDesc name descn =
         let para = fillSep $ text ⊳ (words $ unwords descn)
-        in indent 2 (fillBreak 14 (string name) <+> (align para))
-      optionDesc' ∷ String → [Text] → Doc
+         in indent 2 (fillBreak 14 (string name) <+> align para)
+      -- assemble a list of words into a Doc
+      mkDoc ∷ [Text] → Doc
+      mkDoc = fillSep ∘ fmap (text ∘ unpack)
+      optionDesc' ∷ String → Doc → Doc
       optionDesc' name para =
-        indent 2 (fillBreak 14 (string name) <+> (align (fillSep $ text ∘ unpack ⊳ para)))
+        indent 2 (fillBreak 14 (string name) <+> align para)
       footerDesc ∷ Doc
-      footerDesc = vcat [ string "Standard options:"
-                        , optionDesc "-v" [ "Increase verbosity.  This may be"
-                                          , "used up to 3 times (which is "
-                                          , "equivalent to --debug); and is "
-                                          , "exclusive with --quiet, --debug, "
-                                          , "and --verbose."
-                                          ]
-                        , optionDesc "--quiet" [ "Decrease verbosity.  This "
-                                               , "may be used up to 4 times;"
-                                               , "and is exclusive with -v,"
-                                               , "--debug, and --verbose."
-                                               ]
-                        , optionDesc' "--verbose=OPTS" verboseDesc
-                        , optionDesc "--dry-run" [ "Do not make any changes; "
-                                                 , "just pretend."
-                                                 ]
-                        ]
+      footerDesc = vcat ([ string "Standard options:"
+                         , optionDesc "-v" [ "Increase verbosity.  This may"
+                                           , "be used up to 3 times (which is"
+                                           , "equivalent to --debug); and is"
+                                           , "exclusive with --quiet,"
+                                           , "--debug, and --verbose."
+                                           ]
+                                             
+                         , optionDesc "--quiet" [ "Decrease verbosity.  This "
+                                                , "may be used up to 4 times;"
+                                                , "and is exclusive with -v,"
+                                                , "--debug, and --verbose."
+                                                ]
+
+                         , optionDesc "--debug" [ "Set verbosity to maximum"
+                                                , "(debug level).  This option "
+                                                , "is exclusive with -v,"
+                                                , "--quiet, and --verbose."
+                                                ]
+                         ] ⊕ case count n of
+                               0 → []
+                               1 → [ optionDesc "--dry-run"
+                                                [ "Do not make any changes; "
+                                                , "just pretend."
+                                                ]
+                                   ]
+                               _ → [ optionDesc "--dry-run"
+                                                [ "Do not make any changes; "
+                                                , "just pretend.  May be used"
+                                                , "up to ", show (count n)
+                                                , " times."
+                                                ]
+                                   ]
+
+                         ⊕ [ optionDesc' "--verbose=OPTS" verboseDesc
+                         ]
+                        )
   o ← parseOpts Nothing (progDesc (toString desc) ⊕ footerDoc (Just footerDesc))
                         (parseStdOptions n p)
   let vopts = o ⊣ verboseOptions
@@ -158,23 +184,11 @@ stdMain_ n desc p io = do
       filter    = filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
                                         , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
                              (io o)
--- severity Y
--- classfilter X
--- callstack Y
--- logfile Y
-  -- DESCRIPTION
-  -- filterLog (\ w → w ⊣ ioClass ≡ IORead)
   Exited.doMain $
     case vopts ⊣ logFile of
-      Nothing    → logToStderr (vopts ⊣ csopt) filter -- (filterMinSeverity o (io o))
+      Nothing    → logToStderr (vopts ⊣ csopt) filter
       Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h → 
-                     logToFile (vopts ⊣ csopt) h filter -- (filterMinSeverity o (io o))
-
-xx ∷ (MonadLog (Log s) η, HasIOClass s) ⇒ LoggingT (Log s) η σ → η σ
-xx = filterLog (\ w → (w ⊣ ioClass) `Data.Set.member` (Data.Set.fromList [IORead,IOWrite]))
-
-yy ∷ MonadLog (Log ω) η ⇒ LoggingT (Log ω) η σ → η σ
-yy = filterMinSeverity Debug
+                     logToFile (vopts ⊣ csopt) h filter
 
 ----------
 

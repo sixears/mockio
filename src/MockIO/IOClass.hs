@@ -6,7 +6,7 @@
 
 module MockIO.IOClass
   ( HasIOClass( ioClass ), IOClass(..), IOClassSet
-  , (∈), ioClasses, isExternalIO, isInternalIO, member )
+  , (∈), ioClasses, ioClassParses, isExternalIO, isInternalIO, member )
 where
 
 import GHC.Exts  ( IsList( Item, fromList, toList ) )
@@ -20,6 +20,7 @@ import Data.Function       ( ($), id )
 import Data.List.NonEmpty  ( NonEmpty( (:|) ) )
 import Data.Ord            ( Ord )
 import Data.String         ( String )
+import GHC.Enum            ( Enum )
 import System.Exit         ( ExitCode )
 import System.IO           ( IO )
 import Text.Show           ( Show( show ) )
@@ -101,9 +102,19 @@ data IOClass = IORead  -- ^ An IO action that perceives but does not alter state
              | IOExec  -- ^ An exec (replaces this executable).
              | NoIO    -- ^ No IO.
   -- ordering is not relevant, we just derive it to support Set
-  deriving (Eq,Ord,Show)
+  deriving (Enum,Eq,Ord,Show)
 
 --------------------
+
+{- | Lookup table of IOClass to possible (case-insensitive) string
+     representations. -}  
+ioClassParses ∷ IOClass → [String]
+ioClassParses IORead  = [ "IORead",     "IOR" ]
+ioClassParses IOWrite = [ "IOWrite",    "IOW" ]
+ioClassParses IOCmdR  = [ "IOCmdRead",  "IOCmdR" ]
+ioClassParses IOCmdW  = [ "IOCmdWrite", "IOCmdW" ]
+ioClassParses IOExec  = [ "IOExec" ]
+ioClassParses NoIO    = [ "NoIO" ]
 
 instance Parsecable IOClass where
   parser = let strs =    ("IORead"     , IORead)

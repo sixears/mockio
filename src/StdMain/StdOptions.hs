@@ -61,7 +61,8 @@ import Natural  ( AtMost( Cons, Nil ), Countable( count ), Nat( S ), Natty
 
 -- optparse-applicative ----------------
 
-import Options.Applicative  ( FlagFields, Mod, Parser, flag', help, long,short )
+import Options.Applicative  ( FlagFields, Mod, Parser
+                            , flag', help, internal, long, short )
 
 -- optparse-plus -------------------------
 
@@ -146,7 +147,8 @@ unlessDryRunGE i d n = ifDryRunGE i n d
 ----------------------------------------
 
 flagDryRun ∷ Parser DryRunN
-flagDryRun = flag' DryRunN (long "dry-run" ⊕ help "don't really run")
+-- marked as 'internal' because better help is in the Standard options footer
+flagDryRun = flag' DryRunN (long "dry-run" ⊕ internal)
 
 dryRunOff ∷ DryRunLevel ('S n)
 dryRunOff = DryRunLevel Nil
@@ -205,12 +207,12 @@ parseStdOptions n p =
       flagsev ∷ Natty ν → Mod FlagFields () → (Severity → Severity)
               → Parser VerboseOptions
       flagsev i m f = defVOpts ⊳ flagn i m f defaultSev
-      flagv         = flagsev three (short 'v' ⊕ help "Increase verbosity.")
-                              succ
-      flagq         = flagsev four (long "quiet" ⊕ help "Decrease verbosity.")
+      -- marked as 'internal' because a better description is in the Standard
+      -- Options footer
+      flagv         = flagsev three (short 'v' ⊕ internal) succ
+      flagq         = flagsev four (long "quiet" ⊕ internal)
                               pred
-      debug_help    = "Set verbosity to maximum"
-      flagd         = defVOpts ⊳ flag' Debug (long "debug" ⊕ help debug_help)
+      flagd         = defVOpts ⊳ flag' Debug (long "debug" ⊕ internal)
       verbose = parsecOption (long "verbose")
    in StdOptions ⊳ p
                  ⊵ (flagv ∤ flagq ∤ flagd ∤ verbose)

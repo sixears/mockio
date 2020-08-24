@@ -25,9 +25,11 @@ import Data.Eq                ( Eq )
 import Data.Function          ( ($), id )
 import Data.Functor           ( fmap )
 import Data.Functor.Identity  ( Identity )
-import Data.List.NonEmpty     ( NonEmpty( (:|) ) )
+import Data.List              ( intersperse )
+import Data.List.NonEmpty     ( NonEmpty( (:|) ), toList )
 import Data.Maybe             ( Maybe( Just, Nothing ), fromMaybe )
 import Data.String            ( String )
+import Data.Tuple             ( fst )
 import System.Exit            ( ExitCode )
 import System.IO              ( IO )
 import Text.Read              ( read )
@@ -55,7 +57,8 @@ import Control.Lens.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
-import Log              ( CSOpt( CallStackHead, FullCallStack, NoCallStack ) )
+import Log              ( CSOpt( CallStackHead, FullCallStack, NoCallStack )
+                        , stackOptions, stackParses )
 import Log.HasSeverity  ( HasSeverity( severity ) )
 
 -- logging-effect ----------------------
@@ -65,7 +68,7 @@ import Control.Monad.Log  ( Severity( Alert, Emergency, Warning, Notice ) )
 -- mockio ------------------------------
 
 import MockIO.IOClass  ( IOClass( IOCmdW, IORead, IOWrite ), IOClassSet
-                       , ioClasses )
+                       , ioClasses, ioClassParses )
 
 -- monaderror-io -----------------------
 
@@ -73,7 +76,7 @@ import MonadError2  ( mErrFail )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋫), ℕ )
+import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋫), ю, ℕ )
 
 -- natural-plus ------------------------
 
@@ -81,7 +84,17 @@ import Natural  ( allEnum, toEnum )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative.Help.Pretty  ( Doc, fillSep, text )
+import Options.Applicative.Help.Pretty  ( Doc
+                                        , (<+>), (<$$>)
+                                        , align, comma, dquotes, empty, fillSep
+                                        , hang, hsep, indent, punctuate, sep
+                                        , space, text, vcat
+                                        )
+
+-- optparse-plus --------------------------------
+
+import OptParsePlus2  ( (⊞), finalFullStop, listDQOr, listDQSlash, listW, toDoc
+                      , toDocT, toDocTs )
 
 -- parsec -----------------------------
 
@@ -217,11 +230,13 @@ type LogCfgY = (Maybe IOClassSet,Maybe CSOpt)
 ----------------------------------------
 
 instance Parsecable LogCfg where
+  -- '^' was selected as being a character less likely to be required in
+  -- config values, but not requiring escaping with regular shells (e.g., bash)
   parser = let braces = between (char '{') (char '}')
             in option (LogCfg (ioClasses, NoCallStack)) ∘ braces $
                  parser `sepBy` char '^' ≫ parseElements
 
-                 
+
 parseLogCfgTests ∷ TestTree
 parseLogCfgTests =
   let test ∷ (IOClassSet,CSOpt) → Text → TestTree
@@ -277,18 +292,6 @@ parseVerboseOptions =
                        ⊵ optionMaybe ((,) ⊳ (betwixt colon parser)
                                           ⊵ optionMaybe parser)
 
-{- | --verbose description, for user help, as a list of words -}
-verboseDesc ∷ [Text]
-verboseDesc = [ "Detailed setting of verbosity."
-              , "The general form of OPTS is LEVEL:CONFIG:FILE; where LEVEL"
-              , "is a verbosity level."
-              , "The default verbosity level is", pack (show defSeverity) ⊕ "."
-              , "Available verbosity levels are"
-              , intercalate ", " (pack ∘ show ⊳ allEnum @Severity) ⊕ "."
-              , "Any unique prefix of a verbosity level, case-insensitive, is"
-              , "accepted."
-              ] ≫ words
-
 ----------
 
 parseVerboseOptionsTests ∷ TestTree
@@ -335,6 +338,77 @@ parseVerboseOptionsTests =
 
 instance Parsecable VerboseOptions where
   parser = parseVerboseOptions
+
+----------------------------------------
+
+{- | --verbose description, for user help. -}
+verboseDesc ∷ Doc
+verboseDesc =
+  let stackControl = fillSep [ toDocTs [ "Choose stack output; by default, no"
+                                       , "stack info is output, but any of " ]
+                             , listDQOr (stackParses CallStackHead)
+                             , toDocTs [ "may be used to get the top stack"
+                                       , "frame included with the log; any of"
+                                       ]
+                             , listDQOr (stackParses FullCallStack)
+                             , toDocTs [ "may be used to get the full call"
+                                       , "stack; and any of"
+                                       ]
+                             , listDQOr (stackParses NoCallStack)
+                             , toDocTs [ "may be used to elide the call stack"
+                                       , "(which is the default).  All parsing"
+                                       , "is case-insensitive."
+                                       ]
+                             ]
+      ioclasses = fillSep $ ю [ [ toDocTs [ "Select which IO classes to output."
+                                          , "The config should be written as"
+                                          , "'ioclasses=class0,class1...'"
+                                          , "The available IO classes are " ]
+                                ]
+                              , finalFullStop (punctuate comma $
+                                 (listDQSlash ∘ ioClassParses) ⊳ allEnum)
+                              , [ toDocTs [ "The default is to output all"
+                                          , "IO classes." ]
+                                ]
+                              ]
+
+      example = text "info:{cshead^ioclasses=iocmdw,iocmdr}:/tmp/log"
+
+   in toDoc $ [ toDoc [ "Detailed setting of verbosity."
+                      , "The general form of OPTS is LEVEL:CONFIG:FILE; where"
+                      , "LEVEL is a verbosity level."
+                      , "The default verbosity level is"
+                      , pack (show defSeverity) ⊕ ", and logging is sent to"
+                      , "stderr."
+                      ]
+
+               ,   toDocT "Available verbosity levels are"
+                 ⊞ (listW $ allEnum @Severity) ⊕ "."
+                 ⊞ toDocTs [ "Any unique prefix of a verbosity level,"
+                           , "is accepted.  Alternatively, any digit from"
+                           , "0 (Emergency) to 7 (Debug) is accepted.  Parsing"
+                           , "is case-insensitive."
+                           ]
+
+               , toDocTs [ "The config, if provided, must be between two braces"
+                         , "({}).  Configuration consists of a list of"
+                         , "settings, separated by a circumflex or high caret"
+                         , "(^) character.  Available settings are: "
+                         ]
+                 <$$> text "stack control " ⊞ align stackControl
+                 <$$> text "io classes    " ⊞ align ioclasses
+
+               , toDocTs [ "The file, if provided, will be opened for writing"
+                         , "(rather than appending)." ]
+
+               , toDoc   [ text "An example value to --verbose is: "
+                         , indent 4 example ]
+
+               , toDocTs [ "This option is exclusive with -v, --quiet, and"
+                         , "--debug." ]
+
+
+               ]
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --

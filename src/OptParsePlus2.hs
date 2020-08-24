@@ -1,9 +1,14 @@
-{-# LANGUAGE UnicodeSyntax #-}
+{-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE UnicodeSyntax     #-}
+{-# LANGUAGE ViewPatterns      #-}
 
 module OptParsePlus2
   ( argS, argT, completePrintables, optT, parserPrefs, parseOpts, parsecArgument
   , parsecOption, parsecReader, readT, textualArgument, textualOption
   , usageFailure, usageFailureCode
+
+  , ToDoc( toDoc ), (⊞)
+  , finalFullStop, listDQOr, listSlash, listDQSlash, listW, toDocT, toDocTs
   )
 where
 
@@ -14,10 +19,12 @@ import Prelude  ( fromIntegral )
 import Control.Monad       ( return, when )
 import Data.Bifunctor      ( first )
 import Data.Eq             ( Eq )
-import Data.Foldable       ( Foldable, toList )
-import Data.Function       ( ($), flip )
+import Data.Foldable       ( Foldable, foldr, toList )
+import Data.Function       ( ($), flip, id )
 import Data.Functor        ( fmap )
-import Data.Maybe          ( Maybe, fromMaybe )
+import Data.List           ( intersperse )
+import Data.Maybe          ( Maybe( Just, Nothing ), fromMaybe )
+import Data.String         ( String )
 import Data.Typeable       ( Typeable )
 import Data.Word           ( Word8 )
 import System.Environment  ( getProgName )
@@ -37,25 +44,33 @@ import Data.Textual  ( Printable, Textual, toString )
 
 import Exited  ( exitWith' )
 
+-- extra -------------------------------
+
+import Data.List.Extra  ( unsnoc )
+
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Applicative  ( (⊵) )
-import Data.MoreUnicode.Functor      ( (⊳) )
+import Data.MoreUnicode.Functor2     ( (⊳), (⊳⊳) )
+import Data.MoreUnicode.Monad        ( (≫) )
 
 -- optparse-applicative ----------------
 
 import Options.Applicative.Builder
                               ( ArgumentFields, HasCompleter, InfoMod, Mod
                               , OptionFields, ReadM
-                              , argument, completeWith, eitherReader
+                              , argument, columns, completeWith, eitherReader
                               , failureCode, flag, fullDesc, info, long, option
                               , prefs, progDesc, showHelpOnEmpty
                               , showHelpOnError
                               )
-import Options.Applicative.Help.Core
-                              ( parserHelp, parserUsage )
 import Options.Applicative.Extra
                               ( ParserPrefs, customExecParser )
+import Options.Applicative.Help.Core
+                              ( parserHelp, parserUsage )
+import Options.Applicative.Help.Pretty
+                              ( Doc, (<+>), comma, dquotes, empty, fillSep, hsep
+                              , punctuate, sep, space, text, vcat )
 import Options.Applicative.Types
                               ( Parser )
 
@@ -63,9 +78,17 @@ import Options.Applicative.Types
 
 import MonadIO  ( MonadIO, liftIO, warn )
 
+-- more-unicode ------------------------
+
+import Data.MoreUnicode.Natural  ( ℕ )
+
 -- parsec-plus -------------------------
 
 import ParsecPlus2  ( ParseError, Parsecable, parsec )
+
+-- terminal-size -----------------------
+
+import qualified  System.Console.Terminal.Size  as  TerminalSize
 
 -- textual-plus ------------------------
 
@@ -73,7 +96,7 @@ import TextualPlus  ( parseTextual )
 
 -- text --------------------------------
 
-import Data.Text  ( Text, pack, unpack )
+import Data.Text  ( Text, intercalate, pack, unpack, words )
 
 --------------------------------------------------------------------------------
 
@@ -117,9 +140,10 @@ completePrintables = completeWith ∘ fmap toString ∘ toList
 
 ----------------------------------------
 
--- | standard parser preferences
-parserPrefs ∷ ParserPrefs
-parserPrefs = prefs $ showHelpOnError ⊕ showHelpOnEmpty
+{- | Standard parser preferences.  Input is terminal width. -}
+parserPrefs ∷ Maybe ℕ → ParserPrefs
+parserPrefs w = let width = (fromIntegral $ fromMaybe 80 w)
+                 in prefs $ showHelpOnError ⊕ showHelpOnEmpty ⊕ columns width
 
 ----------------------------------------
 
@@ -161,13 +185,15 @@ parseOpts ∷ MonadIO μ ⇒ Maybe Text -- ^ program name (or uses `getProgName`
                       → Parser α   -- ^ proggie opts parser
                       → μ α
 parseOpts progn baseinfo prsr = liftIO $ do
+  width ← fromIntegral ∘ TerminalSize.width ⊳⊳ TerminalSize.size
   let infoMod = fullDesc ⊕ baseinfo ⊕ usageFailure
       prsr'   = parseHelpWith prsr
-  opts ← customExecParser parserPrefs (info prsr' infoMod)
+      pprefs  = parserPrefs width
+  opts ← customExecParser pprefs (info prsr' infoMod)
   progn' ← flip fromMaybe progn ⊳ (pack ⊳ getProgName)
   when (DoHelp ≡ _doHelp opts) $ do
-    let usage = parserUsage parserPrefs prsr (unpack progn')
-        help  = parserHelp  parserPrefs prsr
+    let usage = parserUsage pprefs prsr (unpack progn')
+        help  = parserHelp  pprefs prsr
     warn (show usage)
     warn (show help)
     -- Note that usage failures, including using --help in the 'wrong' place,
@@ -190,5 +216,69 @@ parsecOption = option parsecReader
 
 parsecArgument ∷ Parsecable α ⇒ Mod ArgumentFields α → Parser α
 parsecArgument = argument parsecReader
+
+----------------------------------------
+
+infixr 6 ⊞
+(⊞) ∷ Doc → Doc → Doc
+(⊞) = (<+>)
+
+{- | Simple auto-conversions to Doc. -}
+class ToDoc α where
+  toDoc ∷ α → Doc
+
+instance ToDoc Doc where
+  toDoc = id
+
+instance ToDoc Text where
+  {- | The text is broken (on spaces) into words; and then re-joined with
+       breaking spaces (⊞) between them, to form a flowable paragraph. -}
+  toDoc ts = fillSep $ fmap (text ∘ unpack) (words ts)
+
+instance ToDoc [Text] where
+  {- | The text is broken (on spaces) into words; and then re-joined with
+       breaking spaces (⊞) between them, to form a flowable paragraph. -}
+  toDoc ts = fillSep $ fmap (text ∘ unpack) (ts ≫ words)
+
+instance ToDoc [[Text]] where
+  {- | Each text list is assembled into a flowing paragraph; each para is
+       separated by a blank line. -}
+  toDoc tss = vcat $ intersperse space (toDoc ⊳ tss)
+      
+instance ToDoc [Doc] where
+  {- | Each doc is separated by a blank line. -}
+  toDoc ds = vcat $ intersperse space ds
+
+toDocT ∷ Text → Doc
+toDocT = toDoc
+
+toDocTs ∷ [Text] → Doc
+toDocTs = toDoc
+
+{- | Create a list by joining words (which are surrounded with double-quotes)
+     with ", ", except for the last, which is joined with "or". -}
+listDQOr ∷ [String] → Doc
+listDQOr (unsnoc → Nothing)     = empty
+listDQOr (unsnoc → Just (ws,w)) =
+  fillSep (punctuate comma (dquotes ∘ text ⊳ ws)) ⊞ text "or" ⊞ dquotes (text w)
+
+{- | Create a list by joining words (showable things) with ", ". -}
+listW ∷ Show α ⇒ [α] → Doc
+listW xs = toDoc $ intercalate ", " (pack ∘ show ⊳ xs)
+
+{- | Create a list by joining strings with "/". -}
+listSlash ∷ [String] → Doc
+listSlash xs = toDoc $ intercalate "/" (pack ⊳ xs)
+
+{- | Create a list by joining double-quoted strings with "/". -}
+listDQSlash ∷ [String] → Doc
+listDQSlash []     = empty
+listDQSlash (x:xs) =
+  foldr (\ a b → a ⊕ text "/" ⊕ b) (dquotes $ text x) (dquotes ∘ text ⊳ xs)
+
+{- | Add a full stop (period) to the final doc in a list. -}
+finalFullStop ∷ [Doc] → [Doc]
+finalFullStop (unsnoc → Just (ds,d)) = ds ⊕ [d ⊕ text "."]
+finalFullStop (unsnoc → Nothing)     = []
 
 -- that's all, folks! ----------------------------------------------------------

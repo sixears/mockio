@@ -25,6 +25,7 @@ module Log
   , logIO, logIO', logIOT
   , logRender, logRender'
   , logToFD', logToFD, logToFile, logToStderr
+  , stackOptions, stackParses
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
 where
@@ -52,6 +53,7 @@ import Data.Ord                ( (<) )
 import Data.Semigroup          ( Semigroup )
 import Data.String             ( String )
 import Data.Tuple              ( snd )
+import GHC.Enum                ( Enum )
 import GHC.Exts                ( IsList( Item, fromList, toList ) )
 import GHC.Stack               ( CallStack )
 import System.Exit             ( ExitCode )
@@ -641,21 +643,33 @@ logToFD' ls h io = do
 ----------------------------------------
 
 data CSOpt = NoCallStack | CallStackHead | FullCallStack
-  deriving (Eq, Show)
+  deriving (Enum, Eq, Show)
+
+{- | Lookup table of CSOpt to possible (case-insensitive) string
+     representations. -}  
+stackParses ∷ CSOpt → [String]
+stackParses NoCallStack   = [ "NoCallStack", "NoCS" ]
+stackParses CallStackHead = [ "CallStackHead", "CSHead", "CSH" ]
+stackParses FullCallStack = [ "FullCallStack", "FullCS", "CallStack", "Stack" ]
+
+{- | Lookup table of String to CSOpt; these are the strings that will be parsed
+     to CSOpt (with `Parseable`).  Parsing is case-insensitive. -}
+stackOptions ∷ NonEmpty (String,CSOpt)
+stackOptions =    ("NoCallStack"   , NoCallStack)
+             :| [ ("NoCS"          , NoCallStack)
+                , ("CSHead"        , CallStackHead)
+                , ("CSH"           , CallStackHead)
+                , ("CallStackHead" , CallStackHead)
+                , ("FCS"           , FullCallStack)
+                , ("FullCallStack" , FullCallStack)
+                , ("FullCS"        , FullCallStack)
+                , ("CallStack"     , FullCallStack)
+                , ("Stack"         , FullCallStack)
+                ]
 
 instance Parsecable CSOpt where
-  parser = let strs =    ("NoCallStack"   , NoCallStack)
-                    :| [ ("NoCS"          , NoCallStack)
-                       , ("CSHead"        , CallStackHead)
-                       , ("CSH"           , CallStackHead)
-                       , ("CallStackHead" , CallStackHead)
-                       , ("FCS"           , FullCallStack)
-                       , ("FullCallStack" , FullCallStack)
-                       , ("FullCS"        , FullCallStack)
-                       , ("CallStack"     , FullCallStack)
-                       , ("Stack"         , FullCallStack)
-                       ]
-            in tries [ caseInsensitiveString st ⋫ return cso | (st,cso) ← strs]
+  parser =
+    tries [ caseInsensitiveString st ⋫ return cso | (st,cso) ← stackOptions ]
 
 {- | Log to a plain file with given callstack choice. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒

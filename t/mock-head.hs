@@ -105,6 +105,7 @@ main = -- XXX Tidy This Up
        -- add 'append' to log file options
        -- better emsg for failing to open log file
        -- add ioclass to log message
+       -- more visually obvious dry-runness; e.g., colour, italics?
        -- log rolling!
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
