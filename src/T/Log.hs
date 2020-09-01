@@ -113,11 +113,12 @@ logTests =
                     , "  _sf_plus_2, called at src/T/Log.hs:66:20 in main:Main"
                     , "  _sf_plus_3, called at src/T/Log.hs:77:17 in main:Main"
                     , "  _4sf, called at src/T/Log.hs:83:8 in main:Main"
-                    , "  _5sf, called at src/T/Log.hs:129:50 in main:Main"
+                    , "  _5sf, called at src/T/Log.hs:130:50 in main:Main"
                     ]
         ] 
       render = logRender' (logRenderOpts' [ renderLogWithSeverity
                                           , renderLogWithCallStack ] Unbounded)
+                          []
    in testGroup "Log"
                 [ assertListEq "_3sf'" exp3sf' $
                     toList (runIdentity $ render _3sf')

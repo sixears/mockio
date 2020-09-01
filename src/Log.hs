@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImplicitParams             #-}
 {-# LANGUAGE InstanceSigs               #-}
@@ -41,10 +42,10 @@ import Control.Monad           ( Monad, forM_, return )
 import Control.Monad.Identity  ( Identity, runIdentity )
 import Data.Bool               ( Bool( True ) )
 import Data.Eq                 ( Eq )
-import Data.Foldable           ( Foldable, all, foldl', foldl1
+import Data.Foldable           ( Foldable, all, concatMap, foldl', foldl1
                                , foldMap, foldr, foldr1 )
-import Data.Function           ( ($), flip, id )
-import Data.Functor            ( fmap )
+import Data.Function           ( ($), (&), flip, id )
+import Data.Functor            ( Functor, fmap )
 import Data.List               ( zip )
 import Data.List.NonEmpty      ( NonEmpty( (:|) ) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
@@ -95,8 +96,8 @@ import Control.Monad.Log  ( BatchingOptions( BatchingOptions
                                            , blockWhenFull, flushMaxQueueSize )
                           , Handler, MonadLog, LoggingT, PureLoggingT
                           , Severity(..)
-                          , flushMaxDelay, logMessage, runLoggingT
-                          , runPureLoggingT, withBatchedHandler
+                          , flushMaxDelay, logMessage, mapLogMessage
+                          , runLoggingT, runPureLoggingT, withBatchedHandler
                           )
 
 -- monadio-plus ------------------------
@@ -117,8 +118,8 @@ import Data.MonoTraversable  ( Element
 import Data.MoreUnicode.Applicative  ( (⋫) )
 import Data.MoreUnicode.Bool         ( 𝔹 )
 import Data.MoreUnicode.Functor      ( (⊳), (⩺) )
-import Data.MoreUnicode.Lens         ( (⊣) )
-import Data.MoreUnicode.Monad        ( (⪼) )
+import Data.MoreUnicode.Lens         ( (⊣), (⊧) )
+import Data.MoreUnicode.Monad        ( (⪼), (≫) )
 import Data.MoreUnicode.Natural      ( ℕ )
 
 -- parsec-plus -------------------------
@@ -143,6 +144,10 @@ import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
 
 import qualified  Data.Text.Prettyprint.Doc.Render.Terminal  as  RenderTerminal
 
+-- safe --------------------------------
+
+import Safe  ( headDef )
+
 -- single ------------------------------
 
 import Single( MonoSingle( osingle ), ofilt', single )
@@ -163,7 +168,7 @@ import qualified  System.Console.Terminal.Size  as  TerminalSize
 
 -- text --------------------------------
 
-import Data.Text     ( Text, intercalate, unlines )
+import Data.Text     ( Text, intercalate, length, lines, unlines )
 import Data.Text.IO  ( hPutStrLn )
 
 -- text-printer ------------------------
@@ -180,7 +185,7 @@ import Data.Time.Clock     ( getCurrentTime )
 
 import Log.HasSeverity    ( HasSeverity( severity ) )
 import Log.LogEntry       ( LogEntry, LogEntry
-                          , attrs, logEntry
+                          , attrs, logEntry, logdoc, mapDoc, mapPrefixDoc
                           , _le0, _le1, _le2, _le3, _le4n, _le5n
                           )
 import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
@@ -195,7 +200,7 @@ import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
 
 {- | A list of LogEntries. -}
 newtype Log ω = Log { unLog ∷ DList (LogEntry ω) }
-  deriving (Eq,Monoid,Semigroup,Show)
+  deriving (Eq,Functor,Monoid,Semigroup,Show)
 
 {- | `WithLog` adds in the `CallStack` constraint, so that if you declare your
      function to use this constraint, your function will be included in the
@@ -467,21 +472,124 @@ debugT = debug'
 
 {- | Transform a monad ready to return (rather than effect) the logging. -}
 logRender ∷ Monad η ⇒
-            LogRenderOpts → PureLoggingT (Log ω) η α → η (α, DList Text)
-logRender opts a = do
-  let renderer = lroRenderer opts
-  (a',ls) ← runPureLoggingT a
+            LogRenderOpts
+          → [LogEntry ω → [LogEntry ω]] -- log transformers, folded in order
+                                        -- from right-to-left
+          → PureLoggingT (Log ω) η α
+          → η (α, DList Text)
+logRender opts trx a = do
   let lpretty ∷ Doc ρ → SimpleDocStream ρ
       lpretty = layoutPretty (opts ⊣ lroOpts)
-      txt = RenderText.renderStrict ∘ lpretty ∘ renderer ⊳ unLog ls
-  return $ (a', txt)
+  (a',ls) ← runPureLoggingT a
+  return $ (a', RenderText.renderStrict ∘ lpretty ⊳ renderMap opts trx ls)
+
+{- | Render a log to a DList of Docs, per `LogRenderOpts` and applying
+     `LogEntry` transformers along the way.
+-}
+renderMap ∷ Foldable ψ ⇒
+            LogRenderOpts → ψ (LogEntry ω → [LogEntry ω]) → Log ω
+          → DList (Doc ())
+renderMap opts trx ls =
+  let -- trx' ∷ LogEntry ω → [LogEntry ω]
+      trx' = foldr (\ a b → concatMap a ∘ b) (DList.toList ∘ singleton) trx
+   in (lroRenderer opts) ⊳ (unLog ls ≫ DList.fromList ∘ trx')
 
 --------------------
 
 {- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
 logRender' ∷ Monad η ⇒
-             LogRenderOpts → PureLoggingT (Log ω) η () → η (DList Text)
-logRender' = fmap snd ⩺ logRender
+             LogRenderOpts
+           → [LogEntry ω → [LogEntry ω]]
+           → PureLoggingT (Log ω) η ()
+           → η (DList Text)
+logRender' opts trx log = snd ⊳ (logRender opts trx log)
+
+----------
+
+logRender'Tests ∷ TestTree
+logRender'Tests =
+  let render o = runIdentity ∘ logRender' o []
+      layoutSimple ∷ Doc ρ → SimpleDocStream ρ
+      layoutSimple = layoutPretty (LayoutOptions Unbounded)
+      docTxt ∷ Doc ρ → Text
+      docTxt = RenderText.renderStrict ∘ layoutSimple
+      msgLen ∷ Doc ρ → Doc ()
+      msgLen d = pretty (length $ docTxt d)
+      msgTrim ∷ Doc ρ → Doc () -- trim to one line
+      msgTrim d = pretty (headDef "" ∘ lines $ docTxt d)
+      msgLenTransform ∷ LogEntry ρ → [LogEntry ρ]
+      msgLenTransform le = [le & logdoc ⊧ msgLen]
+      msgTrimTransform ∷ LogEntry ρ → [LogEntry ρ]
+      msgTrimTransform le = [le & logdoc ⊧ msgTrim]
+      exp2 ∷ [Text]
+      exp2 = [ intercalate "\n" [ "[Info] log_entry 1"
+                                , "  stack0, called at c:1:2 in a:b"
+                                , "    stack1, called at f:5:6 in d:e"
+                                ]
+             ]
+      exp3 ∷ [Text]
+      exp3 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» log_entry 1"
+             , intercalate "\n" [   "[-----------------------] [CRIT] «y#9» "
+                                  ⊕ "multi-line"
+                                ,   "                                       "
+                                  ⊕ "log"
+                                ,   "                                       "
+                                  ⊕ "message"
+                                ]
+             , intercalate "\n"
+                           [ "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» this is a"
+                           ,   "                                               "
+                             ⊕ "vertically aligned"
+                           ,   "                                               "
+                             ⊕ "           message"
+                           ]
+             , "[-----------------------] [EMRG] «y#9» this is the last message"
+             ]
+      exp4 ∷ [Text]
+      exp4 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» 11"
+             , "[-----------------------] [CRIT] «y#9» 22"
+             , "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» 63"
+             , "[-----------------------] [EMRG] «y#9» 24"
+             ]
+      exp5 ∷ [Text]
+      exp5 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» log_entry 1"
+             , "[-----------------------] [CRIT] «y#9» multi-line"
+             , "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» this is a"
+             , "[-----------------------] [EMRG] «y#9» this is the last message"
+             ]
+      exp6 ∷ [Text]
+      exp6 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» 11"
+             , "[-----------------------] [CRIT] «y#9» 10"
+             , "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» 9"
+             , "[-----------------------] [EMRG] «y#9» 24"
+             ]
+   in testGroup "render" $
+                [ assertListEq "render2" exp2 (render lroRenderSevCS _log0m)
+                , assertListEqIO "render3"
+                                 exp3 (logRender' lroRenderTSSevCSH [] _log1m)
+                , assertListEqIO "drop 'em all"
+                                 []
+                                 (logRender' lroRenderTSSevCSH [\_ → []] _log1m)
+                , assertListEqIO "message length"
+                                 exp4
+                                 (logRender' lroRenderTSSevCSH [msgLenTransform]
+                                             _log1m)
+                , assertListEqIO "message trim"
+                                 exp5
+                                 (logRender' lroRenderTSSevCSH
+                                             [msgTrimTransform]
+                                             _log1m)
+                , assertListEqIO "message trim, then len"
+                                 exp6
+                                 (logRender' lroRenderTSSevCSH
+                                             [msgLenTransform, msgTrimTransform]
+                                             _log1m)
+                , assertListEqIO "message len, then trim"
+                                 exp4
+                                 (logRender' lroRenderTSSevCSH
+                                             [msgTrimTransform, msgLenTransform]
+                                             _log1m)
+                ]
 
 ----------------------------------------
 
@@ -646,7 +754,7 @@ data CSOpt = NoCallStack | CallStackHead | FullCallStack
   deriving (Enum, Eq, Show)
 
 {- | Lookup table of CSOpt to possible (case-insensitive) string
-     representations. -}  
+     representations. -}
 stackParses ∷ CSOpt → [String]
 stackParses NoCallStack   = [ "NoCallStack", "NoCS" ]
 stackParses CallStackHead = [ "CallStackHead", "CSHead", "CSH" ]
@@ -671,7 +779,7 @@ instance Parsecable CSOpt where
   parser =
     tries [ caseInsensitiveString st ⋫ return cso | (st,cso) ← stackOptions ]
 
-{- | Log to a plain file with given callstack choice. -}
+{- | Log to a plain file with given callstack choice, and given annotators. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒
             CSOpt → Handle → LoggingT (Log ω) μ α → μ α
 logToFile NoCallStack =
@@ -721,6 +829,66 @@ logToStderr cso = logToTTY cso stderr
 logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒ Handle → LoggingT (Log ω) μ α → μ α
 logToTTYPlain = logToTTY' []
 
+----------------------------------------
+
+runPureLoggingT' ∷ (Monad η, Monoid α) ⇒ PureLoggingT α η () → η α
+runPureLoggingT' = snd ⩺ runPureLoggingT
+
+-- instance Printable ℕ where
+--   print n = P.string (show n)
+
+-- want (LogEntry ω → 𝔹) → Log ω → Log ω
+{-
+mapLog ∷ (α → β) → Log α → Log β
+
+∷ (DList (LogEntry α) → DList (LogEntry α)) → Log α → Log α
+∷ (Foldable ψ, Foldable φ) ⇒ (ψ (LogEntry α) → φ (LogEntry α)) → Log α → Log α
+-}
+
+mapLog ∷ ([LogEntry α] → [LogEntry β]) → Log α → Log β
+mapLog f (Log l) = Log ∘ fromList $ f (toList l)
+
+mapLogE ∷ (LogEntry α → LogEntry β) → Log α → Log β
+mapLogE f = mapLog (fmap f)
+
+-- :t \f -> mapLogMessage (mapLog (filter f))
+-- \f -> mapLogMessage (mapLog (filter f))
+--  :: forall {β} {m :: * -> *} {a}.
+--     MonadLog (Log β) m =>
+--     (LogEntry β -> Bool) -> LoggingT (Log β) m a -> m a
+
+
+{- | Filter a log with some predicate; return a `Log` with only entries that
+     match the given predicate. -}
+filterLog' ∷ MonadLog (Log ω) η ⇒ (LogEntry ω → 𝔹) → LoggingT (Log ω) η σ → η σ
+filterLog' p = mapLogMessage $ ofilt' p
+
+{- | Filter a log with some predicate; return a `Log` with only entries whose
+     payload matches the given predicate. -}
+filterLog ∷ MonadLog (Log ω) η ⇒ (ω → 𝔹) → LoggingT (Log ω) η σ → η σ
+filterLog p = filterLog' (p ∘ view attrs)
+
+{- | Filter a log with some predicate; return a `Log` with only entries whose
+     payload matches the given predicate. -}
+filterSeverity ∷ MonadLog (Log ω) η ⇒
+                 (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
+filterSeverity p = filterLog' (p ∘ view severity)
+
+filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
+                    α → LoggingT (Log ω) η σ → η σ
+filterMinSeverity = filterSeverity ∘ (≥) ∘ view severity
+
+filterTests ∷ TestTree
+filterTests =
+  let runLog ∷ Monoid α ⇒ PureLoggingT α Identity () → α
+      runLog = runIdentity ∘ runPureLoggingT'
+   in testGroup "filter"
+            [ assertListCmp (toText ∘ fmap toInteger) (toText ∘ fmap toInteger)
+                            (≃) ("<3" ∷ Text)
+                            [ _le4n, _le5n ]
+                            (otoList ∘ runLog $ filterLog ((<3)) _log2)
+            ]
+
 --------------------------------------------------------------------------------
 --                                   tests                                    --
 --------------------------------------------------------------------------------
@@ -760,87 +928,8 @@ _log1io = do logIO @Text Warning 1 "start"
 
 -- tests -------------------------------
 
-renderTests ∷ TestTree
-renderTests =
-  let render o = runIdentity ∘ logRender' o
-      exp2 ∷ [Text]
-      exp2 = [ intercalate "\n" [ "[Info] log_entry 1"
-                                , "  stack0, called at c:1:2 in a:b"
-                                , "    stack1, called at f:5:6 in d:e"
-                                ]
-             ]
-      exp3 ∷ [Text]
-      exp3 = [ "[1970-01-01Z00:00:00 Thu] [Info] «c#1» log_entry 1"
-             , intercalate "\n" [   "[-----------------------] [CRIT] «y#9» "
-                                  ⊕ "multi-line"
-                                ,   "                                       "
-                                  ⊕ "log"
-                                ,   "                                       "
-                                  ⊕ "message"
-                                ]
-             , intercalate "\n"
-                           [ "[1970-01-01Z00:00:00 Thu] [Warn] «y#9» this is a"
-                           ,   "                                               "
-                             ⊕ "vertically aligned"
-                           ,   "                                               "
-                             ⊕ "           message"
-                           ]
-             , "[-----------------------] [EMRG] «y#9» this is the last message"
-             ]
-   in testGroup "render" $
-                [ assertListEq "render2" exp2 (render lroRenderSevCS _log0m)
-                , assertListEqIO "render3"
-                                 exp3 (logRender' lroRenderTSSevCSH _log1m)
-                ]
-
-
---------------------
-
-runPureLoggingT' ∷ (Monad η, Monoid α) ⇒ PureLoggingT α η () → η α
-runPureLoggingT' = snd ⩺ runPureLoggingT
-
--- instance Printable ℕ where
---   print n = P.string (show n)
-
-{- | (F)Map the payload of a log. -}
-mapLog ∷ MonadLog ω' η ⇒ (ω → ω') → LoggingT ω η σ → η σ
-mapLog f m = runLoggingT m (logMessage ∘ f)
-
-{- | Filter a log with some predicate; return a `Log` with only entries that
-     match the given predicate. -}
-filterLog' ∷ MonadLog (Log ω) η ⇒ (LogEntry ω → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterLog' p = mapLog $ ofilt' p
-
-{- | Filter a log with some predicate; return a `Log` with only entries whose
-     payload matches the given predicate. -}
-filterLog ∷ MonadLog (Log ω) η ⇒ (ω → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterLog p = filterLog' (p ∘ view attrs)
-
-{- | Filter a log with some predicate; return a `Log` with only entries whose
-     payload matches the given predicate. -}
-filterSeverity ∷ MonadLog (Log ω) η ⇒
-                 (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterSeverity p = filterLog' (p ∘ view severity)
-
-filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
-                    α → LoggingT (Log ω) η σ → η σ
-filterMinSeverity = filterSeverity ∘ (≥) ∘ view severity
-
-filterTests ∷ TestTree
-filterTests =
-  let runLog ∷ Monoid α ⇒ PureLoggingT α Identity () → α
-      runLog = runIdentity ∘ runPureLoggingT'
-   in testGroup "filter"
-            [ assertListCmp (toText ∘ fmap toInteger) (toText ∘ fmap toInteger)
-                            (≃) ("<3" ∷ Text)
-                            [ _le4n, _le5n ]
-                            (otoList ∘ runLog $ filterLog ((<3)) _log2)
-            ]
-
---------------------
-
 tests ∷ TestTree
-tests = testGroup "Log" [ renderTests, filterTests ]
+tests = testGroup "Log" [ logRender'Tests, filterTests ]
 
 ----------------------------------------
 

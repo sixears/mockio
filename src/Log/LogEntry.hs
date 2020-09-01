@@ -2,7 +2,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module Log.LogEntry
-  ( LogEntry, attrs, logdoc, logEntry
+  ( LogEntry, attrs, logdoc, logEntry, mapDoc, mapPrefixDoc, prefix
   , _le0, _le1, _le2, _le3, _le4n, _le5n )
 where
 
@@ -24,6 +24,7 @@ import Text.Show      ( Show( show ) )
 import Data.Bool.Unicode     ( (∧) )
 import Data.Eq.Unicode       ( (≡) )
 import Data.Function.Unicode ( (∘) )
+import Data.Monoid.Unicode   ( (⊕) )
 
 -- data-textual ------------------------
 
@@ -40,7 +41,7 @@ import Control.Monad.Log  ( Severity( Critical, Emergency, Informational
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Lens     ( (⊣), (⊧) )
+import Data.MoreUnicode.Lens     ( (⊣), (⊢), (⊧) )
 import Data.MoreUnicode.Natural  ( ℕ )
 
 -- prettyprinter -----------------------
@@ -91,6 +92,13 @@ data LogEntry ω = LogEntry { _callstack ∷ CallStack
                            }
   deriving Show
 
+-- Functor -----------------------------
+
+instance Functor LogEntry where
+  fmap f le = le & attrs ⊧ f
+
+-- Eq ----------------------------------
+
 instance Eq ω ⇒ Eq (LogEntry ω) where
   le == le' = let simpleDoc l = layoutPretty defaultLayoutOptions (l ⊣ logdoc)
                in   le ⊣ callsitelist ≡ le' ⊣ callsitelist
@@ -99,8 +107,7 @@ instance Eq ω ⇒ Eq (LogEntry ω) where
                   ∧ simpleDoc le      ≡ simpleDoc le'
                   ∧ le ⊣ attrs        ≡ le' ⊣ attrs
 
-instance Functor LogEntry where
-  fmap f le = le & attrs ⊧ f
+-- Equish ------------------------------
 
 instance Equish ω ⇒ Equish (LogEntry ω) where
   {- | Approximately equal; that is, equal but with timestamps differing by no
@@ -116,31 +123,60 @@ instance Equish ω ⇒ Equish (LogEntry ω) where
                  ∧ simpleDoc le      ≡ simpleDoc le'
                  ∧ le ⊣ attrs        ≃ le' ⊣ attrs
 
+{- | Construct a log entry, with no callstack -}
+logEntryNoCS ∷ Maybe UTCTime → Severity → Doc() → ω → LogEntry ω
+logEntryNoCS = logEntry ([] ∷ [(String,SrcLoc)])
+
+-- HasCallstack ------------------------
+
+instance HasCallstack (LogEntry ω) where
+  callstack = lens _callstack (\ le cs → le { _callstack = cs })
+
+-- HasSeverity -------------------------
+
+instance HasSeverity (LogEntry ω) where
+  severity = lens _severity (\ le sv → le { _severity = sv })
+
+-- HasUTCTimeY -------------------------
+
+instance HasUTCTimeY (LogEntry ω) where
+  utcTimeY = lens _timestamp (\ le tm → le { _timestamp = tm })
+
+----------------------------------------
+
+logdoc ∷ Lens' (LogEntry ω)  (Doc ())
+logdoc = lens _logdoc (\ le d → le { _logdoc = d })
+
+----------------------------------------
+
 attrs ∷ Lens (LogEntry ω) (LogEntry ω') ω ω'
 attrs = lens _attrs (\ le as → le { _attrs = as })
+
+----------------------------------------
 
 logEntry ∷ HasCallstack α ⇒
            α → Maybe UTCTime → Severity → Doc() → ω → LogEntry ω
 logEntry cs = LogEntry (cs ⊣ callstack)
 
--- logEntry' ∷ [(String,SrcLoc)] → Maybe UTCTime → Severity → Doc() → LogEntry
--- logEntry' = logEntry
+----------------------------------------
 
-{- | Construct a log entry, with no callstack -}
-logEntryNoCS ∷ Maybe UTCTime → Severity → Doc() → ω → LogEntry ω
-logEntryNoCS = logEntry ([] ∷ [(String,SrcLoc)])
+{- | Change the `logdoc` to some function of the whole `LogEntry`. -}
+mapDoc ∷ (LogEntry ω → Doc ()) → LogEntry ω → LogEntry ω
+mapDoc f e = e & logdoc ⊢ f e
 
-logdoc ∷ Lens' (LogEntry ω)  (Doc ())
-logdoc = lens _logdoc (\ le d → le { _logdoc = d })
+----------------------------------------
 
-instance HasCallstack (LogEntry ω) where
-  callstack = lens _callstack (\ le cs → le { _callstack = cs })
+{- | Prefix the `logdoc` with some other `Doc()`. -}
+prefix ∷ LogEntry ω → Doc() → LogEntry ω
+prefix e d = e & logdoc ⊧ (d ⊕)
 
-instance HasSeverity (LogEntry ω) where
-  severity = lens _severity (\ le sv → le { _severity = sv })
+----------------------------------------
 
-instance HasUTCTimeY (LogEntry ω) where
-  utcTimeY = lens _timestamp (\ le tm → le { _timestamp = tm })
+{- | Prefix the `logdoc` with some function of the whole `LogEntry`. -}
+mapPrefixDoc ∷ (LogEntry ω → Doc()) → LogEntry ω → LogEntry ω
+mapPrefixDoc f = mapDoc (\ e → f e ⊕ e ⊣ logdoc)
+
+-- rendering -----------------------------------------------
 
 instance Printable ω ⇒ Printable (LogEntry ω) where
   print le =
@@ -151,20 +187,6 @@ instance Printable ω ⇒ Printable (LogEntry ω) where
                                           (stackHeadTxt le)
                                           (renderDoc $ le ⊣ logdoc)
                                           (le ⊣ attrs)
-
-{-
-instance Printable (LogEntry ℕ) where
-  print le =
-    let renderDoc = renderStrict ∘ layoutPretty defaultLayoutOptions
-     in P.text $ [fmt|[%Z|%-4t] %t %t <%w>|]
-                                          (le ⊣ utcTimeY)
-                                          (take 4 ∘ pack ∘ show $ le ⊣ severity)
-                                          (stackHeadTxt le)
-                                          (renderDoc $ le ⊣ logdoc)
-                                          (le ⊣ attrs)
--}
-
--- rendering -----------------------------------------------
 
 -- test data -------------------------------------------------------------------
 

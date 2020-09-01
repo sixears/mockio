@@ -223,7 +223,7 @@ withFile ∷ (MonadIO μ, IsFile π, AsIOError ε, MonadError ε μ) ⇒
 withFile fn mode io = asIOError $ System.IO.withFile (fn ⫥ filepath) mode io
 
 withFileT ∷ (MonadIO μ, IsFile π, AsIOError ε, MonadError ε μ) ⇒
-           π → IOMode → (Handle → ExceptT ε IO ω) → μ ω
+            π → IOMode → (Handle → ExceptT ε IO ω) → μ ω
 withFileT fn mode io =
   join ∘ asIOError $ System.IO.withFile (fn ⫥ filepath) mode (\ h → ѥ (io h))
 

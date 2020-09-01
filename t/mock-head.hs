@@ -94,17 +94,10 @@ parseOptions = Options ⊳ strArgument (metavar "FILE")
 
 main ∷ IO ()
 main = -- XXX Tidy This Up
-       -- XXX UsageError
-       -- XXX Add CallStack Options
-       -- XXX More verbose options, incl. file,level,callstack,ioclass
-       -- verbose=[3|WARNING|wARn]:{@callstack/ioread}:/
-       -- XXX compress main, xx
-       -- decent help texts for std options, particualrly --verbose with all its
-       -- ioclasses, etc.
-       -- make {} in verbose options optional (if ':' not used within); use + to separate
+       -- add ioclass to log message
+       -- make {} in verbose options optional (if ':' not used within)
        -- add 'append' to log file options
        -- better emsg for failing to open log file
-       -- add ioclass to log message
        -- more visually obvious dry-runness; e.g., colour, italics?
        -- log rolling!
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go

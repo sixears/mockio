@@ -10,14 +10,19 @@ where
 
 -- base --------------------------------
 
-import Control.Exception       ( Exception )
+import qualified  System.IO
+
+import Control.Exception       ( Exception, throwIO )
+import Control.Monad           ( return )
+import Control.Monad.Fix       ( mfix )
 import Control.Monad.IO.Class  ( MonadIO )
+import Data.Either             ( either )
 import Data.Foldable           ( and )
-import Data.Function           ( ($) )
+import Data.Function           ( ($), id )
 import Data.Functor            ( fmap )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String, unwords, words ) 
-import System.IO               ( IO )
+import System.IO               ( FilePath, Handle, IO )
 import Text.Show               ( show )
 
 -- base-unicode-symbols ----------------
@@ -40,6 +45,10 @@ import Data.Textual  ( Printable, toString )
 import qualified  Exited2  as  Exited
 import Exited2  ( ToExitCode )
 
+-- fpath -------------------------------
+
+import FPath.AsFilePath2  ( filepath )
+
 -- lens --------------------------------
 
 import Control.Lens.Getter  ( view )
@@ -50,18 +59,23 @@ import Log              ( CSOpt( NoCallStack ), Log, filterLog, filterLog'
                         , filterMinSeverity, filterSeverity, logToFile
                         , logToStderr
                         )
-import Log.LogEntry     ( attrs )
+import Log.LogEntry     ( LogEntry, attrs, mapPrefixDoc )
 import Log.HasSeverity  ( severity )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug ) )
+import Control.Monad.Log  ( LoggingT, MonadLog, Severity( Debug )
+                          , discardLogging, mapLogMessage, mapLogMessageM )
 
 -- mockio ------------------------------
 
 import MockIO          ( DoMock( DoMock, NoMock ) )
-import MockIO.IOClass  ( HasIOClass, IOClass( IORead, IOWrite )
+import MockIO.IOClass  ( HasIOClass, IOClass( IORead, IOWrite ), IOClassSet
                        , (∈), ioClass, member )
+
+-- monad-control -----------------------
+
+import Control.Monad.Trans.Control  ( MonadBaseControl, liftBaseWith, restoreM )
 
 -- monaderror-io -----------------------
 
@@ -71,14 +85,19 @@ import MonadError.IO.Error  ( AsIOError )
 
 import MonadIO.File2  ( IOMode( WriteMode ), withFile, withFileT )
 
+-- mono-traversable --------------------
+
+import Data.MonoTraversable  ( omap )
+
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Functor  ( (⊳) )
-import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Lens     ( (⊣), (⫥) )
+import Data.MoreUnicode.Monad    ( (≫) )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT )
+import Control.Monad.Except  ( ExceptT, MonadError, runExceptT )
 import Control.Monad.Reader  ( ReaderT, runReaderT )
 
 -- natural-plus ------------------------
@@ -98,6 +117,10 @@ import Options.Applicative.Help.Pretty  ( Doc
 -- optparse-plus -----------------------
 
 import OptParsePlus2  ( parseOpts )
+
+-- prettyprinter -----------------------
+
+import Data.Text.Prettyprint.Doc  ( pretty )
 
 -- text --------------------------------
 
@@ -119,6 +142,8 @@ import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
 
 {- | Like `stdMain`, but gives the incoming `io` full access to the `StdOptions`
      object. -}
+
+{-
 stdMain_ ∷ ∀ ε α σ ω ν μ .
            (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
             ToExitCode σ, HasIOClass ω) ⇒
@@ -127,6 +152,7 @@ stdMain_ ∷ ∀ ε α σ ω ν μ .
          → Parser α
          → (StdOptions ν α → LoggingT (Log ω)(LoggingT (Log ω)(ExceptT ε IO)) σ)
          → μ ()
+-}
 stdMain_ n desc p io = do
   let optionDesc ∷ String → [String] → Doc
       optionDesc name descn =
@@ -178,18 +204,46 @@ stdMain_ n desc p io = do
                         )
   o ← parseOpts Nothing (progDesc (toString desc) ⊕ footerDoc (Just footerDesc))
                         (parseStdOptions n p)
-  let vopts = o ⊣ verboseOptions
-      ioClasses = vopts ⊣ ioClassFilter
-      sevOpt    = o ⊣ severity
-      filter    = filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
-                                        , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
-                             (io o)
+  let vopts      = o ⊣ verboseOptions
+      ioClasses  = vopts ⊣ ioClassFilter
+      sevOpt     = o ⊣ severity
+
+--       filter     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ LoggingT (Log ω) η σ → η σ
+      filter io  = {- mapLogMessage id $ -} filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
+                                         , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
+                              io
+  
   Exited.doMain $
     case vopts ⊣ logFile of
-      Nothing    → logToStderr (vopts ⊣ csopt) filter
-      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h → 
-                     logToFile (vopts ⊣ csopt) h filter
+      Nothing    → logToStderr (vopts ⊣ csopt) (filter $ io o)
+      Just logfn → let -- xx ∷ LoggingT (Log ω) (ExceptT ε IO) σ
+                       xx = filter $ io o
+--                    in withFileT (unLogFile logfn) WriteMode $ \ h → 
+                    in withFileT (unLogFile logfn) WriteMode $ \ h → 
+--                    in withFileLifted (unLogFile logfn ⫥ filepath) WriteMode $ \ h → 
+                         logToFile (vopts ⊣ csopt) h xx -- XXX (filter $ io o)
+--                         runExceptT (logToFile (vopts ⊣ csopt) h xx) ≫ either throwIO return -- XXX (filter $ io o)
 
+xx ∷ HasIOClass ω ⇒ LogEntry ω → LogEntry ω
+xx = mapPrefixDoc (\ e → pretty ∘ show $ e ⊣ (attrs ∘ ioClass))
+
+yy ∷ HasIOClass ω ⇒ Log ω → Log ω
+yy = omap xx
+
+zz ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ α → η α
+zz io = mapLogMessage yy (return io)
+
+ff     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒
+         Severity → IOClassSet → LoggingT (Log ω) η σ → η σ
+ff sevOpt ioClasses io  = {- mapLogMessage id $ -} filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
+                                         , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
+                              io
+
+-- https://hackage.haskell.org/package/monad-control/docs/Control-Monad-Trans-Control.html#v:liftBaseWith
+withFileLifted :: MonadBaseControl IO m => FilePath -> IOMode -> (Handle -> m a) -> m a
+withFileLifted file mode action = liftBaseWith (\runInBase -> System.IO.withFile file mode (runInBase ∘ action)) ≫ restoreM
+                             -- = control $ \runInBase -> withFile file mode (runInBase . action)
+                             -- = liftBaseOp (withFile file mode) action
 ----------
 
 {- | Execute the 'main' of a standard program with standard options that returns
