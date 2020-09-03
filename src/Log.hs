@@ -20,20 +20,16 @@ module Log
   , emergency', alert', critical', err', warn', notice', info', debug'
   , emergencyT, alertT, criticalT, errT, warnT, noticeT, infoT, debugT
 
---  , filterLog, filterLog', filterMinSeverity, filterSeverity
   , fromList
   , log, logMsg, log', logMsg', logT, logMsgT, logT', logMsgT'
   , logIO, logIO', logIOT
   , logRender, logRender'
   , logToFD', logToFD, logToFile, logToStderr
   , stackOptions, stackParses
-  , logFilter
+  , logFilter, mapLog, mapLogE
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
 where
-
-import Debug.Trace  ( trace, traceShow )
-import Prelude ( toInteger )
 
 -- base --------------------------------
 
@@ -41,7 +37,7 @@ import qualified  Data.Foldable  as  Foldable
 
 import Control.Concurrent      ( threadDelay )
 import Control.Monad           ( Monad, forM_, return )
-import Control.Monad.Identity  ( Identity, runIdentity )
+import Control.Monad.Identity  ( runIdentity )
 import Data.Bool               ( Bool( True ) )
 import Data.Eq                 ( Eq )
 import Data.Foldable           ( Foldable, all, concatMap, foldl', foldl1
@@ -50,9 +46,8 @@ import Data.Function           ( ($), (&), flip, id )
 import Data.Functor            ( Functor, fmap )
 import Data.List               ( zip )
 import Data.List.NonEmpty      ( NonEmpty( (:|) ), nonEmpty )
-import Data.Maybe              ( Maybe( Just, Nothing ), catMaybes, fromMaybe )
+import Data.Maybe              ( Maybe( Just, Nothing ), catMaybes )
 import Data.Monoid             ( Monoid )
-import Data.Ord                ( (<) )
 import Data.Semigroup          ( Semigroup )
 import Data.String             ( String )
 import Data.Tuple              ( snd )
@@ -69,7 +64,6 @@ import Data.Bool.Unicode      ( (∧) )
 import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-import Data.Ord.Unicode       ( (≥) )
 
 -- data-default ------------------------
 
@@ -88,17 +82,13 @@ import Data.DList  ( DList, singleton )
 
 import Control.Monad.Catch  ( MonadMask )
 
--- lens --------------------------------
-
-import Control.Lens.Getter  ( view )
-
 -- logging-effect ----------------------
 
 import Control.Monad.Log  ( BatchingOptions( BatchingOptions
                                            , blockWhenFull, flushMaxQueueSize )
                           , Handler, MonadLog, LoggingT, PureLoggingT
                           , Severity(..)
-                          , flushMaxDelay, logMessage, mapLogMessage
+                          , flushMaxDelay, logMessage
                           , runLoggingT, runPureLoggingT, withBatchedHandler
                           )
 
@@ -139,7 +129,7 @@ import qualified  Data.Text.Prettyprint.Doc.Render.Text      as  RenderText
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
                                   , PageWidth( AvailablePerLine, Unbounded )
                                   , SimpleDocStream(..)
-                                  , emptyDoc, layoutPretty, line', pretty, vsep
+                                  , layoutPretty, line', pretty, vsep
                                   )
 
 -- prettyprinter-ansi-terminal ---------
@@ -152,7 +142,7 @@ import Safe  ( headDef )
 
 -- single ------------------------------
 
-import Single( MonoSingle( osingle ), ofilt', single )
+import Single( MonoSingle( osingle ), single )
 
 -- tasty -------------------------------
 
@@ -161,7 +151,7 @@ import Test.Tasty  ( TestTree, testGroup )
 -- tasty-plus --------------------------
 
 import TastyPlus         ( runTestsP, runTestsReplay, runTestTree )
-import TastyPlus2        ( assertListEq, assertListCmp, assertListEqIO )
+import TastyPlus2        ( assertListEq, assertListEqIO )
 import TastyPlus.Equish  ( Equish( (≃) ) )
 
 -- terminal-size -----------------------
@@ -185,11 +175,8 @@ import Data.Time.Clock     ( getCurrentTime )
 --                     local imports                       -
 ------------------------------------------------------------
 
-import Log.HasSeverity    ( HasSeverity( severity ) )
 import Log.LogEntry       ( LogEntry, LogEntry
-                          , attrs, logEntry, logdoc, mapDoc, mapPrefixDoc
-                          , _le0, _le1, _le2, _le3, _le4n, _le5n
-                          )
+                          , logEntry, logdoc, _le0, _le1, _le2, _le3 )
 import Log.LogRenderOpts  ( LogAnnotator, LogRenderOpts
                           , logRenderOpts', lroOpts, lroRenderer
                           , lroRendererAnsi
@@ -278,6 +265,7 @@ instance IsList (Log ω) where
       variant, `vsep'`, which declares `Nothing` for empty docs, thus we can
       completely ignore them (don't call the logger at all).
 -}
+vsep' ∷ [Doc α] → Maybe (Doc α)
 vsep' [] = Nothing
 vsep' xs = Just $ vsep xs
 
@@ -531,7 +519,7 @@ logRender lro trx a = do
 logRender' ∷ Monad η ⇒
              LogRenderOpts → [LogTransformer ω] → PureLoggingT (Log ω) η ()
            → η [Text]
-logRender' opts trx log = snd ⊳ (logRender opts trx log)
+logRender' opts trx lg = snd ⊳ (logRender opts trx lg)
 
 ----------
 
@@ -873,66 +861,11 @@ logToTTYPlain trx = logToTTY' [] trx
 
 ----------------------------------------
 
-runPureLoggingT' ∷ (Monad η, Monoid α) ⇒ PureLoggingT α η () → η α
-runPureLoggingT' = snd ⩺ runPureLoggingT
-
--- instance Printable ℕ where
---   print n = P.string (show n)
-
--- want (LogEntry ω → 𝔹) → Log ω → Log ω
-{-
-mapLog ∷ (α → β) → Log α → Log β
-
-∷ (DList (LogEntry α) → DList (LogEntry α)) → Log α → Log α
-∷ (Foldable ψ, Foldable φ) ⇒ (ψ (LogEntry α) → φ (LogEntry α)) → Log α → Log α
--}
-
 mapLog ∷ ([LogEntry α] → [LogEntry β]) → Log α → Log β
 mapLog f (Log l) = Log ∘ fromList $ f (toList l)
 
 mapLogE ∷ (LogEntry α → LogEntry β) → Log α → Log β
 mapLogE f = mapLog (fmap f)
-
--- :t \f -> mapLogMessage (mapLog (filter f))
--- \f -> mapLogMessage (mapLog (filter f))
---  :: forall {β} {m :: * -> *} {a}.
---     MonadLog (Log β) m =>
---     (LogEntry β -> Bool) -> LoggingT (Log β) m a -> m a
-
-{-# DEPRECATED filterLog' "use `LogTransformer`s instead" #-}
-{- | Filter a log with some predicate; return a `Log` with only entries that
-     match the given predicate. -}
-filterLog' ∷ MonadLog (Log ω) η ⇒ (LogEntry ω → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterLog' p = mapLogMessage $ ofilt' p
-
-{- | Filter a log with some predicate; return a `Log` with only entries whose
-     payload matches the given predicate. -}
-{-# DEPRECATED filterLog "use `LogTransformer`s instead" #-}
-filterLog ∷ MonadLog (Log ω) η ⇒ (ω → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterLog p = filterLog' (p ∘ view attrs)
-
-{- | Filter a log with some predicate; return a `Log` with only entries whose
-     payload matches the given predicate. -}
-{-# DEPRECATED filterSeverity "use `LogTransformer`s instead" #-}
-filterSeverity ∷ MonadLog (Log ω) η ⇒
-                 (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
-filterSeverity p = filterLog' (p ∘ view severity)
-
-{-# DEPRECATED filterMinSeverity "use `LogTransformer`s instead" #-}
-filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
-                    α → LoggingT (Log ω) η σ → η σ
-filterMinSeverity = filterSeverity ∘ (≥) ∘ view severity
-
-filterTests ∷ TestTree
-filterTests =
-  let runLog ∷ Monoid α ⇒ PureLoggingT α Identity () → α
-      runLog = runIdentity ∘ runPureLoggingT'
-   in testGroup "filter"
-            [ assertListCmp (toText ∘ fmap toInteger) (toText ∘ fmap toInteger)
-                            (≃) ("<3" ∷ Text)
-                            [ _le4n, _le5n ]
-                            (otoList ∘ runLog $ filterLog ((<3)) _log2)
-            ]
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --
@@ -974,7 +907,7 @@ _log1io = do logIO @Text Warning 1 "start"
 -- tests -------------------------------
 
 tests ∷ TestTree
-tests = testGroup "Log" [ logRender'Tests, filterTests ]
+tests = testGroup "Log" [ logRender'Tests ]
 
 ----------------------------------------
 
@@ -998,11 +931,5 @@ _testm = do
   logToTTY      NoCallStack   [] stderr _log0io
   logToTTY      CallStackHead [] stderr _log0io
   logToTTY      CallStackHead [] stderr _log0io
-  logToTTY      FullCallStack [] stderr (filterLog (<3) _log1io)
-
-_testm' ∷ IO ()
-_testm' = do
-  logToTTY    FullCallStack [] stderr (filterLog (<3) _log2)
-  logToTTY    FullCallStack [] stderr (filterLog (<3) _log1io)
 
 -- that's all, folks! ----------------------------------------------------------

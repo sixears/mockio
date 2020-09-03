@@ -1,4 +1,5 @@
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE UnicodeSyntax     #-}
 {-# LANGUAGE ViewPatterns      #-}
 
@@ -12,7 +13,7 @@ module OptParsePlus2
   )
 where
 
-import Prelude  ( fromIntegral )
+import Prelude  ( error, fromIntegral )
 
 -- base --------------------------------
 
@@ -61,16 +62,15 @@ import Options.Applicative.Builder
                               , OptionFields, ReadM
                               , argument, columns, completeWith, eitherReader
                               , failureCode, flag, fullDesc, info, long, option
-                              , prefs, progDesc, showHelpOnEmpty
-                              , showHelpOnError
+                              , prefs, showHelpOnEmpty, showHelpOnError
                               )
 import Options.Applicative.Extra
                               ( ParserPrefs, customExecParser )
 import Options.Applicative.Help.Core
                               ( parserHelp, parserUsage )
 import Options.Applicative.Help.Pretty
-                              ( Doc, (<+>), comma, dquotes, empty, fillSep, hsep
-                              , punctuate, sep, space, text, vcat )
+                              ( Doc, (<+>), comma, dquotes, empty, fillSep
+                              , punctuate, space, text, vcat )
 import Options.Applicative.Types
                               ( Parser )
 
@@ -97,6 +97,10 @@ import TextualPlus  ( parseTextual )
 -- text --------------------------------
 
 import Data.Text  ( Text, intercalate, pack, unpack, words )
+
+-- tfmt --------------------------------
+
+import Text.Fmt  ( fmt )
 
 --------------------------------------------------------------------------------
 
@@ -185,7 +189,7 @@ parseOpts ∷ MonadIO μ ⇒ Maybe Text -- ^ program name (or uses `getProgName`
                       → Parser α   -- ^ proggie opts parser
                       → μ α
 parseOpts progn baseinfo prsr = liftIO $ do
-  width ← fromIntegral ∘ TerminalSize.width ⊳⊳ TerminalSize.size
+  width ← TerminalSize.width @ℕ ⊳⊳ TerminalSize.size
   let infoMod = fullDesc ⊕ baseinfo ⊕ usageFailure
       prsr'   = parseHelpWith prsr
       pprefs  = parserPrefs width
@@ -261,6 +265,7 @@ listDQOr ∷ [String] → Doc
 listDQOr (unsnoc → Nothing)     = empty
 listDQOr (unsnoc → Just (ws,w)) =
   fillSep (punctuate comma (dquotes ∘ text ⊳ ws)) ⊞ text "or" ⊞ dquotes (text w)
+listDQOr x = error $ [fmt|this should never happen (listDQOr) %w|] x
 
 {- | Create a list by joining words (showable things) with ", ". -}
 listW ∷ Show α ⇒ [α] → Doc
@@ -280,5 +285,6 @@ listDQSlash (x:xs) =
 finalFullStop ∷ [Doc] → [Doc]
 finalFullStop (unsnoc → Just (ds,d)) = ds ⊕ [d ⊕ text "."]
 finalFullStop (unsnoc → Nothing)     = []
+finalFullStop x = error $ [fmt|this should never happen (finalFullStop) %w|] x
 
 -- that's all, folks! ----------------------------------------------------------
