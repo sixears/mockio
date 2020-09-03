@@ -134,8 +134,8 @@ data LogRenderOpts =
                       to the LHS, the head of the list would be lefthand-most in
                       the resulting output.
                    -}
-                  _lroRenderers  ∷ LogRenderer
-                , _lroWidth      ∷ PageWidth
+                  _lroRenderers    ∷ LogRenderer
+                , _lroWidth        ∷ PageWidth
                 }
 
 instance Default LogRenderOpts where

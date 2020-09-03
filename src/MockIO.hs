@@ -227,7 +227,7 @@ _testr = runTestsReplay tests
 
 _testm ∷ IO ()
 _testm = do
-  gr ← logToStderr FullCallStack $ readFn @IOClass "/etc/group" NoMock
+  gr ← logToStderr FullCallStack [] $ readFn @IOClass "/etc/group" NoMock
   putStrLn "---- /etc/group"
   putStrLn gr
   putStrLn "---------------"

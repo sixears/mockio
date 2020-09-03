@@ -30,7 +30,7 @@ import Text.Show               ( show )
 import Data.Bool.Unicode      ( (∧) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
-import Data.Ord.Unicode       ( (≥) )
+import Data.Ord.Unicode       ( (≥), (≤) )
 
 -- containers --------------------------
 
@@ -120,7 +120,7 @@ import OptParsePlus2  ( parseOpts )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc  ( pretty )
+import qualified Data.Text.Prettyprint.Doc  as  PPDoc
 
 -- text --------------------------------
 
@@ -143,16 +143,15 @@ import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
 {- | Like `stdMain`, but gives the incoming `io` full access to the `StdOptions`
      object. -}
 
-{-
 stdMain_ ∷ ∀ ε α σ ω ν μ .
            (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
             ToExitCode σ, HasIOClass ω) ⇒
            Natty ν
          → Text
          → Parser α
-         → (StdOptions ν α → LoggingT (Log ω)(LoggingT (Log ω)(ExceptT ε IO)) σ)
+--         → (StdOptions ν α → LoggingT (Log ω)(LoggingT (Log ω)(ExceptT ε IO)) σ)
+         → (StdOptions ν α → LoggingT (Log ω)(ExceptT ε IO) σ)
          → μ ()
--}
 stdMain_ n desc p io = do
   let optionDesc ∷ String → [String] → Doc
       optionDesc name descn =
@@ -208,24 +207,25 @@ stdMain_ n desc p io = do
       ioClasses  = vopts ⊣ ioClassFilter
       sevOpt     = o ⊣ severity
 
---       filter     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ LoggingT (Log ω) η σ → η σ
-      filter io  = {- mapLogMessage id $ -} filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
+      filter     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ LoggingT (Log ω) η σ → η σ
+      filter io  = filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
                                          , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
                               io
+      filters    = [ \le → [ mapPrefixDoc (\le → PPDoc.braces (PPDoc.pretty (show $ le ⊣ attrs ∘ ioClass)) ⊕ PPDoc.space) le ]
+                   , \le → if le ⊣ severity ≤ sevOpt then [le] else []
+                   ]
+
   
   Exited.doMain $
     case vopts ⊣ logFile of
-      Nothing    → logToStderr (vopts ⊣ csopt) (filter $ io o)
-      Just logfn → let -- xx ∷ LoggingT (Log ω) (ExceptT ε IO) σ
-                       xx = filter $ io o
---                    in withFileT (unLogFile logfn) WriteMode $ \ h → 
-                    in withFileT (unLogFile logfn) WriteMode $ \ h → 
---                    in withFileLifted (unLogFile logfn ⫥ filepath) WriteMode $ \ h → 
-                         logToFile (vopts ⊣ csopt) h xx -- XXX (filter $ io o)
---                         runExceptT (logToFile (vopts ⊣ csopt) h xx) ≫ either throwIO return -- XXX (filter $ io o)
+      Nothing    → logToStderr (vopts ⊣ csopt) filters
+                               ({- filter $ -} io o)
+      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h → 
+                     logToFile (vopts ⊣ csopt) filters h (io o)
+
 
 xx ∷ HasIOClass ω ⇒ LogEntry ω → LogEntry ω
-xx = mapPrefixDoc (\ e → pretty ∘ show $ e ⊣ (attrs ∘ ioClass))
+xx = mapPrefixDoc (\ e → PPDoc.pretty ∘ show $ e ⊣ (attrs ∘ ioClass))
 
 yy ∷ HasIOClass ω ⇒ Log ω → Log ω
 yy = omap xx
@@ -261,13 +261,12 @@ stdMain ∷ ∀ ε α σ ω ν μ .
           Natty ν
         → Text
         → Parser α
-        → (DryRunLevel ν → α
-                         → LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)) σ)
+        → (DryRunLevel ν → α → LoggingT (Log ω) (ExceptT ε IO) σ)
         → μ ()
 stdMain n desc p io =
   stdMain_ n desc p (\ o → io (o ⊣ dryRunLevel) (o ⊣ options))
 
-type LogTIO ω ε = (LoggingT (Log ω) (LoggingT (Log ω) (ExceptT ε IO)))
+type LogTIO ω ε = (LoggingT (Log ω) (ExceptT ε IO))
 
 stdMainx ∷ ∀ ε α σ ω ν μ .
           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,

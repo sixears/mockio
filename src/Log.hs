@@ -31,6 +31,7 @@ module Log
   , tests, _log0, _log0m, _log1, _log1m )
 where
 
+import Debug.Trace  ( trace, traceShow )
 import Prelude ( toInteger )
 
 -- base --------------------------------
@@ -47,8 +48,8 @@ import Data.Foldable           ( Foldable, all, concatMap, foldl', foldl1
 import Data.Function           ( ($), (&), flip, id )
 import Data.Functor            ( Functor, fmap )
 import Data.List               ( zip )
-import Data.List.NonEmpty      ( NonEmpty( (:|) ) )
-import Data.Maybe              ( Maybe( Just, Nothing ) )
+import Data.List.NonEmpty      ( NonEmpty( (:|) ), nonEmpty )
+import Data.Maybe              ( Maybe( Just, Nothing ), catMaybes, fromMaybe )
 import Data.Monoid             ( Monoid )
 import Data.Ord                ( (<) )
 import Data.Semigroup          ( Semigroup )
@@ -137,7 +138,7 @@ import qualified  Data.Text.Prettyprint.Doc.Render.Text      as  RenderText
 import Data.Text.Prettyprint.Doc  ( Doc, LayoutOptions( LayoutOptions )
                                   , PageWidth( AvailablePerLine, Unbounded )
                                   , SimpleDocStream(..)
-                                  , layoutPretty, line', pretty, vsep
+                                  , emptyDoc, layoutPretty, line', pretty, vsep
                                   )
 
 -- prettyprinter-ansi-terminal ---------
@@ -267,6 +268,19 @@ instance IsList (Log ω) where
   toList (Log ls) = DList.toList ls
 
 ----------------------------------------
+
+{- | `vsep` returns an emptyDoc for an empty list; that results in a blank line.
+      We often don't want that; the blank line appears whenever a log was
+      filtered; which would really suck for heavily filtered logs (thus
+      discouraging the use of logs for infrequently looked-at things - but then
+      making it awkward to debug irritating edge-cases.  So we define a `vsep`
+      variant, `vsep'`, which declares `Nothing` for empty docs, thus we can
+      completely ignore them (don't call the logger at all).
+-}
+vsep' [] = Nothing
+vsep' xs = Just $ vsep xs
+
+------------------------------------------------------------
 
 {- | Log with a timestamp, thus causing IO. -}
 logIO ∷ ∀ ρ ω μ . (WithLogIO ω μ, ToDoc_ ρ) ⇒ Severity → ω → ρ → μ ()
@@ -470,38 +484,47 @@ debugT = debug'
 
 ----------------------------------------
 
+type LogTransformer ω = LogEntry ω → [LogEntry ω]
+
+{- | Render a log to a list of Docs, per `LogRenderOpts` and applying
+     `LogEntry` transformers along the way.
+-}
+renderMapLog ∷ Foldable ψ ⇒
+               (LogEntry ω → Doc ρ) → ψ (LogTransformer ω) → Log ω
+             → [Doc ρ]
+renderMapLog renderer trx ls =
+  let -- trx' ∷ LogTransformer ω
+      trx' = foldr (\ a b → concatMap a ∘ b) (:[]) trx
+   in renderer ⊳ (toList ls ≫ trx')
+
+renderMapLog' ∷ Foldable ψ ⇒
+                (LogEntry ω → Doc ρ) → ψ (LogTransformer ω) → LogEntry ω
+              → Maybe (Doc ρ)
+renderMapLog' renderer trx le = vsep' ∘ renderMapLog renderer trx $ osingle le
+
+----------------------------------------
+
 {- | Transform a monad ready to return (rather than effect) the logging. -}
 logRender ∷ Monad η ⇒
             LogRenderOpts
-          → [LogEntry ω → [LogEntry ω]] -- log transformers, folded in order
-                                        -- from right-to-left
+          → [LogTransformer ω] -- log transformers, folded in order
+                               -- from right-to-left
           → PureLoggingT (Log ω) η α
-          → η (α, DList Text)
-logRender opts trx a = do
-  let lpretty ∷ Doc ρ → SimpleDocStream ρ
-      lpretty = layoutPretty (opts ⊣ lroOpts)
+          → η (α, [Text])
+logRender lro trx a = do
   (a',ls) ← runPureLoggingT a
-  return $ (a', RenderText.renderStrict ∘ lpretty ⊳ renderMap opts trx ls)
-
-{- | Render a log to a DList of Docs, per `LogRenderOpts` and applying
-     `LogEntry` transformers along the way.
--}
-renderMap ∷ Foldable ψ ⇒
-            LogRenderOpts → ψ (LogEntry ω → [LogEntry ω]) → Log ω
-          → DList (Doc ())
-renderMap opts trx ls =
-  let -- trx' ∷ LogEntry ω → [LogEntry ω]
-      trx' = foldr (\ a b → concatMap a ∘ b) (DList.toList ∘ singleton) trx
-   in (lroRenderer opts) ⊳ (unLog ls ≫ DList.fromList ∘ trx')
+  let lpretty ∷ Doc ρ → SimpleDocStream ρ
+      lpretty = layoutPretty (lro ⊣ lroOpts)
+      rendered ∷ [Doc()]
+      rendered = renderMapLog (lroRenderer lro) trx ls
+  return $ (a', RenderText.renderStrict ∘ lpretty ⊳ rendered)
 
 --------------------
 
 {- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
 logRender' ∷ Monad η ⇒
-             LogRenderOpts
-           → [LogEntry ω → [LogEntry ω]]
-           → PureLoggingT (Log ω) η ()
-           → η (DList Text)
+             LogRenderOpts → [LogTransformer ω] → PureLoggingT (Log ω) η ()
+           → η [Text]
 logRender' opts trx log = snd ⊳ (logRender opts trx log)
 
 ----------
@@ -593,6 +616,12 @@ logRender'Tests =
 
 ----------------------------------------
 
+whenJust ∷ Monad η ⇒ (α → η ()) → Maybe α → η ()
+whenJust _  Nothing  = return ()
+whenJust io (Just y) = io y
+
+----------------------------------------
+
 {- | Write to an FD with given options, using `withBatchedHandler`.
      Each log entry is vertically separated.
  -}
@@ -618,15 +647,17 @@ withSimpleHandler ∷ MonadIO μ ⇒
                     PageWidth
                   → Handle
                   → (Handle → SimpleDocStream ρ → IO ())
-                  → (LogEntry ω → Doc ρ)
+                  → (LogEntry ω → Maybe (Doc ρ))
                   → LoggingT (Log ω) μ α
                   → μ α
 withSimpleHandler pw fd hPutSDS entryToDoc =
   let hPutNewline h = hPutStrLn h ""
       layout = layoutPretty (LayoutOptions pw)
-      renderEntry e = do let sds = layout (entryToDoc e)
-                         hPutSDS fd sds
-                         hPutNewline fd
+      renderEntry e = let go d = do let -- sds ∷ SimpleDocStream ρ
+                                       sds = layout d
+                                    hPutSDS fd sds
+                                    hPutNewline fd
+                       in whenJust go (entryToDoc e)
       renderEach l = do liftIO $ forM_ (toList l) renderEntry
 
    in (flip runLoggingT) (renderEach)
@@ -664,28 +695,20 @@ ttyBatchingOptions = BatchingOptions { flushMaxDelay     = 2_000
 {- | Write a Log to a filehandle, with given rendering and options. -}
 logToHandle ∷ (MonadIO μ, MonadMask μ) ⇒
               (Handle → SimpleDocStream ρ → IO()) -- ^ write an SDSρ to Handle
-            → (LogEntry ω → Doc ρ)                -- ^ render a LogEntry
+            → (LogEntry ω → Maybe (Doc ρ))        -- ^ render a LogEntry
             → Maybe BatchingOptions
             → PageWidth
             → Handle
             → LoggingT (Log ω) μ α
             → μ α
 logToHandle renderIO renderEntry (Just bopts) width fh io =
-  let -- `vsep` returns an emptyDoc for an empty list; that results in a blank
-      -- line.  We don't want that; the blank line appears whenever a log was
-      -- filtered; which would really suck for heavily filtered logs (thus
-      -- discouraging the use of logs for infrequently looked-at things - but
-      -- then making it awkward to debug irritating edge-cases.
-      -- So we define a `vsep` variant, `vsep'`, which declares `Nothing`
-      -- for empty docs, thus we can completely ignore them (dont call the
-      -- logger at all)
-      vsep' [] = Nothing
-      vsep' xs = Just $ vsep xs
-      -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
-      renderDoc   = vsep' ∘ fmap renderEntry ∘ otoList
+  let -- renderDoc   ∷ Log ω → Maybe (Doc ρ)
+      renderDoc   =
+        vsep ∘ toList ⩺ nonEmpty ∘ catMaybes ∘ fmap renderEntry ∘ otoList
+
       -- handler     ∷ (Maybe (Doc ρ) → μ ()) → μ α
       handler h   =
-        runLoggingT io ((\ case Just d → h d; Nothing → return ()) ∘ renderDoc)
+        runLoggingT io (whenJust h ∘ renderDoc)
    in withFDHandler renderIO width bopts fh handler
 
 logToHandle renderIO renderEntry Nothing width fh io =
@@ -697,11 +720,15 @@ logToHandle renderIO renderEntry Nothing width fh io =
 logToHandleNoAdornments ∷ (MonadIO μ, MonadMask μ) ⇒
                           Maybe BatchingOptions
                         → LogRenderOpts
+                        → [LogTransformer ω]
                         → Handle
                         → LoggingT (Log ω) μ α
                         → μ α
-logToHandleNoAdornments bopts lro =
-  logToHandle RenderText.renderIO (lroRenderer lro) bopts (lro ⊣ lroWidth)
+logToHandleNoAdornments bopts lro trx =
+  logToHandle RenderText.renderIO
+              (renderMapLog' (lroRenderer lro) trx)
+              bopts
+              (lro ⊣ lroWidth)
 
 --------------------
 
@@ -709,44 +736,52 @@ logToHandleNoAdornments bopts lro =
 logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
                   Maybe BatchingOptions
                 → LogRenderOpts
+                → [LogTransformer ω]
                 → Handle
                 → LoggingT (Log ω) μ α
                 → μ α
-logToHandleAnsi bopts lro = logToHandle RenderTerminal.renderIO
-                                        (lroRendererAnsi lro) bopts
-                                        (lro ⊣ lroWidth)
+logToHandleAnsi bopts lro trx =
+  logToHandle RenderTerminal.renderIO
+              (renderMapLog' (lroRendererAnsi lro) trx)
+              bopts
+              (lro ⊣ lroWidth)
+
 ----------------------------------------
 
 {- | Log to a regular file, with unbounded width. -}
 logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
-             [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
-logToFile' ls = let lro = logRenderOpts' ls Unbounded
-                 in logToHandleNoAdornments (Just fileBatchingOptions) lro
+             [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+           → μ α
+logToFile' ls trx =
+  let lro = logRenderOpts' ls Unbounded
+   in logToHandleNoAdornments (Just fileBatchingOptions) lro trx
 
 --------------------
 
 {- | Log to a tty, using current terminal width. -}
 logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
-logToTTY' ls h io = do
+            [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+          → μ α
+logToTTY' ls trx h io = do
   size ← liftIO $ TerminalSize.size
   let lro = case size of
               Just sz → let width = AvailablePerLine (TerminalSize.width sz) 1.0
                          in logRenderOpts' ls width
               Nothing → logRenderOpts' ls Unbounded
-  logToHandleAnsi Nothing lro h io
+  logToHandleAnsi Nothing lro trx h io
 
 --------------------
 
 {- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
      batch time; else go unadorned with higher batch time. -}
 logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
-           [LogAnnotator] → Handle → LoggingT (Log ω) μ α → μ α
-logToFD' ls h io = do
+           [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+         → μ α
+logToFD' ls trx h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
-  then logToTTY'  ls h io
-  else logToFile' ls h io
+  then logToTTY'  ls trx h io
+  else logToFile' ls trx h io
 
 ----------------------------------------
 
@@ -781,53 +816,54 @@ instance Parsecable CSOpt where
 
 {- | Log to a plain file with given callstack choice, and given annotators. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒
-            CSOpt → Handle → LoggingT (Log ω) μ α → μ α
-logToFile NoCallStack =
-  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ]
-logToFile CallStackHead =
+            CSOpt → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
+logToFile NoCallStack trx =
+  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ] trx
+logToFile CallStackHead trx =
   logToFile' [ renderLogWithTimestamp, renderLogWithSeverity
-             , renderLogWithStackHead ]
-logToFile FullCallStack =
+             , renderLogWithStackHead ] trx
+logToFile FullCallStack trx =
   logToFile' [ renderLogWithCallStack, renderLogWithTimestamp
-             , renderLogWithSeverity ]
+             , renderLogWithSeverity ] trx
 
 --------------------
 
 {- | Log to a terminal with given callstack choice. -}
 logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒
-           CSOpt → Handle → LoggingT (Log ω) μ α → μ α
-logToTTY NoCallStack =
-  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ]
-logToTTY CallStackHead =
+           CSOpt → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
+logToTTY NoCallStack trx =
+  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ] trx
+logToTTY CallStackHead trx =
   logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity
-            , renderLogWithStackHead ]
-logToTTY FullCallStack =
+            , renderLogWithStackHead ] trx
+logToTTY FullCallStack trx =
   logToTTY' [ renderLogWithCallStack, renderLogWithTimestamp
-            , renderLogWithSeverity ]
+            , renderLogWithSeverity ] trx
 
 --------------------
 
 {- | Log to a file handle; if it looks like a terminal, use Ansi logging and
      current terminal width; else go unadorned with unbounded width. -}
 logToFD ∷ (MonadIO μ, MonadMask μ) ⇒
-          CSOpt → Handle → LoggingT (Log ω) μ α → μ α
-logToFD cso h io = do
+          CSOpt → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
+logToFD cso trx h io = do
   isatty ← liftIO $ hIsTerminalDevice h
   if isatty
-  then logToTTY  cso h io
-  else logToFile cso h io
+  then logToTTY  cso trx h io
+  else logToFile cso trx h io
 
 ----------------------------------------
 
 {- | Log to stderr, assuming it's a terminal, with given callstack choice &
      filter. -}
 logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒
-              CSOpt → LoggingT (Log ω) μ α → μ α
-logToStderr cso = logToTTY cso stderr
+              CSOpt → [LogTransformer ω] → LoggingT (Log ω) μ α → μ α
+logToStderr cso trx = logToTTY cso trx stderr
 
 {- | Log to a handle, assuming it's a terminal, with no log decorations. -}
-logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒ Handle → LoggingT (Log ω) μ α → μ α
-logToTTYPlain = logToTTY' []
+logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒
+                [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
+logToTTYPlain trx = logToTTY' [] trx
 
 ----------------------------------------
 
@@ -857,7 +893,7 @@ mapLogE f = mapLog (fmap f)
 --     MonadLog (Log β) m =>
 --     (LogEntry β -> Bool) -> LoggingT (Log β) m a -> m a
 
-
+{-# DEPRECATED filterLog' "use `LogTransformer`s instead" #-}
 {- | Filter a log with some predicate; return a `Log` with only entries that
      match the given predicate. -}
 filterLog' ∷ MonadLog (Log ω) η ⇒ (LogEntry ω → 𝔹) → LoggingT (Log ω) η σ → η σ
@@ -865,15 +901,18 @@ filterLog' p = mapLogMessage $ ofilt' p
 
 {- | Filter a log with some predicate; return a `Log` with only entries whose
      payload matches the given predicate. -}
+{-# DEPRECATED filterLog "use `LogTransformer`s instead" #-}
 filterLog ∷ MonadLog (Log ω) η ⇒ (ω → 𝔹) → LoggingT (Log ω) η σ → η σ
 filterLog p = filterLog' (p ∘ view attrs)
 
 {- | Filter a log with some predicate; return a `Log` with only entries whose
      payload matches the given predicate. -}
+{-# DEPRECATED filterSeverity "use `LogTransformer`s instead" #-}
 filterSeverity ∷ MonadLog (Log ω) η ⇒
                  (Severity → 𝔹) → LoggingT (Log ω) η σ → η σ
 filterSeverity p = filterLog' (p ∘ view severity)
 
+{-# DEPRECATED filterMinSeverity "use `LogTransformer`s instead" #-}
 filterMinSeverity ∷ ∀ α ω σ η . (MonadLog (Log ω) η, HasSeverity α) ⇒
                     α → LoggingT (Log ω) η σ → η σ
 filterMinSeverity = filterSeverity ∘ (≥) ∘ view severity
@@ -948,16 +987,16 @@ _testr = runTestsReplay tests
      for these. -}
 _testm ∷ IO ()
 _testm = do
-  logToStderr NoCallStack          _log0io
-  logToTTYPlain             stderr _log0io
-  logToTTY    NoCallStack   stderr _log0io
-  logToTTY    CallStackHead stderr _log0io
-  logToTTY    CallStackHead stderr _log0io
-  logToTTY    FullCallStack stderr (filterLog (<3) _log1io)
+  logToStderr   NoCallStack   []        _log0io
+  logToTTYPlain               [] stderr _log0io
+  logToTTY      NoCallStack   [] stderr _log0io
+  logToTTY      CallStackHead [] stderr _log0io
+  logToTTY      CallStackHead [] stderr _log0io
+  logToTTY      FullCallStack [] stderr (filterLog (<3) _log1io)
 
 _testm' ∷ IO ()
 _testm' = do
-  logToTTY    FullCallStack stderr (filterLog (<3) _log2)
-  logToTTY    FullCallStack stderr (filterLog (<3) _log1io)
+  logToTTY    FullCallStack [] stderr (filterLog (<3) _log2)
+  logToTTY    FullCallStack [] stderr (filterLog (<3) _log1io)
 
 -- that's all, folks! ----------------------------------------------------------
