@@ -20,13 +20,14 @@ module Log
   , emergency', alert', critical', err', warn', notice', info', debug'
   , emergencyT, alertT, criticalT, errT, warnT, noticeT, infoT, debugT
 
-  , filterLog, filterLog', filterMinSeverity, filterSeverity
+--  , filterLog, filterLog', filterMinSeverity, filterSeverity
   , fromList
   , log, logMsg, log', logMsg', logT, logMsgT, logT', logMsgT'
   , logIO, logIO', logIOT
   , logRender, logRender'
   , logToFD', logToFD, logToFile, logToStderr
   , stackOptions, stackParses
+  , logFilter
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
 where
@@ -485,6 +486,11 @@ debugT = debug'
 ----------------------------------------
 
 type LogTransformer ω = LogEntry ω → [LogEntry ω]
+
+{- | Create a log filter from a predicate, for ease of making `LogTransformer`s.
+ -}
+logFilter ∷ (LogEntry ω → 𝔹) → LogEntry ω  → [LogEntry ω]
+logFilter p le = if p le then [le] else []
 
 {- | Render a log to a list of Docs, per `LogRenderOpts` and applying
      `LogEntry` transformers along the way.

@@ -12,6 +12,7 @@ where
 
 import qualified  System.IO
 
+import Control.Applicative     ( pure )
 import Control.Exception       ( Exception, throwIO )
 import Control.Monad           ( return )
 import Control.Monad.Fix       ( mfix )
@@ -21,7 +22,7 @@ import Data.Foldable           ( and )
 import Data.Function           ( ($), id )
 import Data.Functor            ( fmap )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
-import Data.String             ( String, unwords, words ) 
+import Data.String             ( String, unwords, words )
 import System.IO               ( FilePath, Handle, IO )
 import Text.Show               ( show )
 
@@ -38,7 +39,7 @@ import Data.Set  ( fromList, member )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable, toString )
+import Data.Textual  ( Printable, toString, toText )
 
 -- exited ------------------------------
 
@@ -55,8 +56,8 @@ import Control.Lens.Getter  ( view )
 
 -- log-plus ----------------------------
 
-import Log              ( CSOpt( NoCallStack ), Log, filterLog, filterLog'
-                        , filterMinSeverity, filterSeverity, logToFile
+import Log              ( CSOpt( NoCallStack ), Log, {- filterLog, filterLog'
+                        , filterMinSeverity, filterSeverity, -} logToFile, logFilter
                         , logToStderr
                         )
 import Log.LogEntry     ( LogEntry, attrs, mapPrefixDoc )
@@ -91,6 +92,7 @@ import Data.MonoTraversable  ( omap )
 
 -- more-unicode ------------------------
 
+import Data.MoreUnicode.Bool     ( 𝔹 )
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣), (⫥) )
 import Data.MoreUnicode.Monad    ( (≫) )
@@ -171,7 +173,7 @@ stdMain_ n desc p io = do
                                            , "exclusive with --quiet,"
                                            , "--debug, and --verbose."
                                            ]
-                                             
+
                          , optionDesc "--quiet" [ "Decrease verbosity.  This "
                                                 , "may be used up to 4 times;"
                                                 , "and is exclusive with -v,"
@@ -207,22 +209,33 @@ stdMain_ n desc p io = do
       ioClasses  = vopts ⊣ ioClassFilter
       sevOpt     = o ⊣ severity
 
+{-
       filter     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ LoggingT (Log ω) η σ → η σ
       filter io  = filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
                                          , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
                               io
-      filters    = [ \le → [ mapPrefixDoc (\le → PPDoc.braces (PPDoc.pretty (show $ le ⊣ attrs ∘ ioClass)) ⊕ PPDoc.space) le ]
-                   , \le → if le ⊣ severity ≤ sevOpt then [le] else []
+-}
+--      mapPfxLE f le = [ mapPrefixDoc f le ]
+      -- prefix logdoc with toText of IOClass, enclosed in braces, and then a space
+      prefixIOC ∷ ∀ α β . HasIOClass α ⇒ LogEntry α → PPDoc.Doc β
+      prefixIOC le =
+        PPDoc.braces (PPDoc.pretty ∘ toText $ le ⊣ attrs∘ioClass) ⊕ PPDoc.space
+--      filtLE ∷ ∀ α . (α → 𝔹) → α  → [α]
+--      filtLE p le = if p le then [le] else []
+      filters    = [ pure ∘ mapPrefixDoc prefixIOC
+                   , \ le → if le ⊣ severity ≤ sevOpt then [le] else []
+                   , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
                    ]
 
-  
+
   Exited.doMain $
     case vopts ⊣ logFile of
       Nothing    → logToStderr (vopts ⊣ csopt) filters
                                ({- filter $ -} io o)
-      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h → 
+      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h →
                      logToFile (vopts ⊣ csopt) filters h (io o)
 
+prefixIOC le = PPDoc.braces (PPDoc.pretty (toText $ le ⊣ attrs ∘ ioClass)) ⊕ PPDoc.space
 
 xx ∷ HasIOClass ω ⇒ LogEntry ω → LogEntry ω
 xx = mapPrefixDoc (\ e → PPDoc.pretty ∘ show $ e ⊣ (attrs ∘ ioClass))
@@ -233,11 +246,13 @@ yy = omap xx
 zz ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒ α → η α
 zz io = mapLogMessage yy (return io)
 
+{-
 ff     ∷ (MonadLog (Log ω) η, HasIOClass ω) ⇒
          Severity → IOClassSet → LoggingT (Log ω) η σ → η σ
 ff sevOpt ioClasses io  = {- mapLogMessage id $ -} filterLog' (\ w → and [ sevOpt ≥ w ⊣ severity
                                          , (w ⊣ attrs ∘ ioClass) ∈ ioClasses ])
                               io
+-}
 
 -- https://hackage.haskell.org/package/monad-control/docs/Control-Monad-Trans-Control.html#v:liftBaseWith
 withFileLifted :: MonadBaseControl IO m => FilePath -> IOMode -> (Handle -> m a) -> m a
