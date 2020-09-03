@@ -62,7 +62,7 @@ import Natural  ( AtMost( Cons, Nil ), Countable( count ), Nat( S ), Natty
 -- optparse-applicative ----------------
 
 import Options.Applicative  ( FlagFields, Mod, Parser
-                            , flag', help, internal, long, short )
+                            , flag', internal, long, short )
 
 -- optparse-plus -------------------------
 

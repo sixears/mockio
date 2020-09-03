@@ -25,11 +25,9 @@ import Data.Eq                ( Eq )
 import Data.Function          ( ($), id )
 import Data.Functor           ( fmap )
 import Data.Functor.Identity  ( Identity )
-import Data.List              ( intersperse )
-import Data.List.NonEmpty     ( NonEmpty( (:|) ), toList )
+import Data.List.NonEmpty     ( NonEmpty( (:|) ) )
 import Data.Maybe             ( Maybe( Just, Nothing ), fromMaybe )
 import Data.String            ( String )
-import Data.Tuple             ( fst )
 import System.Exit            ( ExitCode )
 import System.IO              ( IO )
 import Text.Read              ( read )
@@ -42,7 +40,7 @@ import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable( print ), toText )
+import Data.Textual  ( Printable( print ) )
 
 -- fpath -------------------------------
 
@@ -58,7 +56,7 @@ import Control.Lens.Lens  ( Lens', lens )
 -- log-plus ----------------------------
 
 import Log              ( CSOpt( CallStackHead, FullCallStack, NoCallStack )
-                        , stackOptions, stackParses )
+                        , stackParses )
 import Log.HasSeverity  ( HasSeverity( severity ) )
 
 -- logging-effect ----------------------
@@ -84,12 +82,8 @@ import Natural  ( allEnum, toEnum )
 
 -- optparse-applicative ----------------
 
-import Options.Applicative.Help.Pretty  ( Doc
-                                        , (<+>), (<$$>)
-                                        , align, comma, dquotes, empty, fillSep
-                                        , hang, hsep, indent, punctuate, sep
-                                        , space, text, vcat
-                                        )
+import Options.Applicative.Help.Pretty  ( Doc, (<$$>), align, comma, fillSep
+                                        , indent, punctuate, text )
 
 -- optparse-plus --------------------------------
 
@@ -126,7 +120,7 @@ import TastyPlus  ( (≟), assertIsLeft, assertRight, runTestsP, runTestsReplay
 
 -- text --------------------------------
 
-import Data.Text  ( Text, intercalate, pack, unpack, words )
+import Data.Text  ( Text, pack, unpack )
 
 -- text-printer ------------------------
 
@@ -166,10 +160,10 @@ instance HasVerboseOptions VerboseOptions where
 
 instance Printable VerboseOptions where
   -- just for easier visibility during debugging
-  print (VerboseOptions sev ioclasses csopt Nothing) =
-    P.text $ [fmt|%w-%T-<%w>-|] sev ioclasses csopt
-  print (VerboseOptions sev ioclasses csopt (Just logfile)) =
-    P.text $ [fmt|%w-%T-<%w>-%T|] sev ioclasses csopt logfile
+  print (VerboseOptions sev ioclasses cso Nothing) =
+    P.text $ [fmt|%w-%T-<%w>-|] sev ioclasses cso
+  print (VerboseOptions sev ioclasses cso (Just logfile)) =
+    P.text $ [fmt|%w-%T-<%w>-%T|] sev ioclasses cso logfile
 
 ----------------------------------------
 
@@ -271,13 +265,11 @@ parsecSeverity = try parsecSeverityN ∤ parsecSeverityS
 
 ----------------------------------------
 
-mkVerboseOptions ∷ Severity → Maybe(LogCfg, Maybe LogFile)
-                 → VerboseOptions
-mkVerboseOptions sev c =
-  case c of
-    Nothing → VerboseOptions sev ioClasses NoCallStack Nothing
-    (Just (unLogCfg → (iocs,csopt),fn)) →
-      VerboseOptions sev iocs csopt fn
+mkVerboseOptions ∷ Severity → Maybe(LogCfg, Maybe LogFile) → VerboseOptions
+mkVerboseOptions sev Nothing =
+  VerboseOptions sev ioClasses NoCallStack Nothing
+mkVerboseOptions sev (Just (unLogCfg → (iocs,cso),fn)) = 
+  VerboseOptions sev iocs cso fn
 
 ----------------------------------------
 
