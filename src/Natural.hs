@@ -15,8 +15,6 @@ module Natural
   )
 where
 
-import Prelude  ( error )
-
 import qualified  GHC.Enum
 import qualified  GHC.Num
 import qualified  GHC.Real
@@ -28,9 +26,8 @@ import qualified  Data.Foldable
 import qualified  Data.List
 
 import Control.Applicative  ( Alternative, pure )
-import Data.Bool            ( Bool( False, True ), otherwise )
+import Data.Bool            ( Bool( True ), otherwise )
 import Data.Eq              ( Eq( (==) ) )
-import Data.Function        ( id )
 import Data.Ord             ( Ord( (<=), (>) ) )
 import Data.String          ( String )
 import Text.Show            ( Show( show ) )
@@ -87,13 +84,42 @@ instance Show (Natty n) where
 
 instance Eq (Natty n) where
   Zy     == Zy     = True
+{-
+    • Couldn't match type ‘'Z’ with ‘'S n1’
+      Inaccessible code in
+        a pattern with constructor:
+          Sy :: forall (n :: Nat). Natty n -> Natty ('S n),
+        in an equation for ‘==’
+    • In the pattern: Sy _
+      In an equation for ‘==’: Zy == (Sy _) = False
+      In the instance declaration for ‘Eq (Natty n)’
+
   Zy     == (Sy _) = False
+-}
+{-
+    • Couldn't match type ‘'S n1’ with ‘'Z’
+      Inaccessible code in
+        a pattern with constructor: Zy :: Natty 'Z, in an equation for ‘==’
+    • In the pattern: Zy
+      In an equation for ‘==’: (Sy _) == Zy = False
+      In the instance declaration for ‘Eq (Natty n)’
+
   (Sy _) == Zy     = False
+-}
   (Sy n) == (Sy m) = n == m
 
 instance Ord (Natty n) where
   Zy     <= _      = True
-  (Sy n) <= Zy     = False
+{-
+    • Couldn't match type ‘'S n1’ with ‘'Z’
+      Inaccessible code in
+        a pattern with constructor: Zy :: Natty 'Z, in an equation for ‘<=’
+    • In the pattern: Zy
+      In an equation for ‘<=’: (Sy _) <= Zy = False
+      In the instance declaration for ‘Ord (Natty n)’
+
+  (Sy _) <= Zy     = False
+-}
   (Sy n) <= (Sy m) = n <= m
 
 ------------------------------------------------------------
