@@ -10,8 +10,7 @@ where
 
 import MonadError.IO.Error
 import System.IO.Error.Lens  ( _InappropriateType )
-import System.IO.Error         ( ioeGetErrorType, ioeGetFileName, ioeGetHandle
-                               , ioeGetLocation, mkIOError, userError )
+import System.IO.Error         ( ioeGetErrorType )
 import Data.MoreUnicode      ( 𝔹 )
 import Data.Function.Unicode  ( (∘) )
 import Control.Lens.Fold     ( has )
@@ -23,7 +22,7 @@ import Control.Monad  ( join )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError, throwError )
+import Control.Monad.Except  ( ExceptT, MonadError )
 
 import MonadError  ( splitMError )
 

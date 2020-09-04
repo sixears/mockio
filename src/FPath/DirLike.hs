@@ -18,10 +18,8 @@ import Data.Textual  ( Printable )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import FPath.AbsDir   ( AbsDir )
-import FPath.DirType  ( DirTypeC )
-import FPath.Parent   ( HasParentMay )
-import FPath.RelDir   ( RelDir )
+import FPath.AbsDir  ( AbsDir )
+import FPath.RelDir  ( RelDir )
 
 --------------------------------------------------------------------------------
 

@@ -32,17 +32,9 @@ import Control.Lens.Iso    ( Iso', iso )
 import Control.Lens.Lens   ( Lens', lens )
 import Control.Lens.Tuple  ( _1, _2 )
 
--- mono-traversable --------------------
-
-import Data.MonoTraversable  ( Element )
-
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Lens       ( (⊣), (⫣) )
-
--- non-empty-containers ----------------
-
-import NonEmptyContainers.SeqConversions  ( IsMonoSeq )
 
 ------------------------------------------------------------
 --                     local imports                      --
