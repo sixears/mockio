@@ -72,7 +72,7 @@ import Text.Fmt  ( fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ), mkIO, mkIO' )
+import MockIO          ( DoMock( DoMock, NoMock ), MockIOClass, mkIO, mkIO' )
 import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 --------------------------------------------------------------------------------
@@ -94,15 +94,13 @@ parseOptions = Options ⊳ strArgument (metavar "FILE")
 
 main ∷ IO ()
 main = -- XXX Tidy This Up
-       -- add ioclass to log message
-       -- make {} in verbose options optional (if ':' not used within)
        -- add 'append' to log file options
-       -- better emsg for failing to open log file
        -- more visually obvious dry-runness; e.g., colour, italics?
        -- log rolling!
+       -- only dump footer with --help  or --longhelp?
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
-go ∷ (MonadLog (Log IOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
+go ∷ (MonadLog (Log MockIOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
      DoMock → Options → μ ()
 go mck opts = do
   let fn = fileName opts
@@ -112,7 +110,7 @@ go mck opts = do
 withFile ∷ MonadIO μ ⇒ AbsFile → IOMode → (Handle → IO ω) → μ ω
 withFile fn mode = liftIO ∘ System.IO.withFile (toString fn) mode
 
-withWriteFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒
+withWriteFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒
                 DoMock → α → Maybe AbsFile → (Handle → IO α) → μ α
 withWriteFile mck a fn io = do
   let fname         = maybe "-STDOUT-" toText fn
@@ -123,11 +121,11 @@ withWriteFile mck a fn io = do
     Just wfn → 
         mkIO' Warning IOWrite logmsg (return a) (withFile wfn WriteMode io) mck
 
-writeFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒
+writeFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒
             DoMock → Maybe AbsFile → Text → μ ()
 writeFile mck fnY txt = withWriteFile mck () fnY (\ h → hPutStr h txt)
 
-readFile ∷ (MonadIO μ, MonadLog (Log IOClass) μ) ⇒ Text → μ Text
+readFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒ Text → μ Text
 readFile fn = let logmsg = [fmtT|read %t|] fn
                   result = Data.Text.IO.readFile (unpack fn)
                in mkIO Informational IORead logmsg "" result NoMock

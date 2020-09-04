@@ -12,7 +12,6 @@ where
 -- base --------------------------------
 
 import Data.List   ( dropWhileEnd )
-import Data.Maybe  ( Maybe( Just, Nothing ) )
 import System.IO   ( FilePath )
 
 -- base-unicode-symbols ----------------
@@ -29,23 +28,17 @@ import Data.Textual  ( fromString, toString )
 
 import Control.Lens.Prism  ( Prism', prism' )
 
--- more-unicode ------------------------
-
-import Data.MoreUnicode.Lens  ( (⫥) )
-
 -- safe --------------------------------
 
-import Safe  ( lastDef, lastMay )
+import Safe  ( lastDef )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
 import FPath.AbsDir   ( AbsDir )
-import FPath.AbsFile  ( AbsFile )
 import FPath.AsFilePath
 import FPath.RelDir   ( RelDir )
-import FPath.RelFile  ( RelFile )
 
 --------------------------------------------------------------------------------
 

@@ -3,14 +3,14 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO
-  ( DoMock(..), mock, mkIO, mkIO', tests )
+  ( DoMock(..), HasDoMock( doMock ), MockIOClass, mkIO, mkIO', tests )
 where
 
 -- base --------------------------------
 
 import Control.Monad  ( return )
 import Data.Eq        ( Eq )
-import Data.Function  ( ($), (&), const )
+import Data.Function  ( ($), (&), const, id )
 import Data.Maybe     ( Maybe( Just ) )
 import Data.String    ( String )
 import GHC.Exts       ( fromList )
@@ -19,15 +19,24 @@ import System.Exit    ( ExitCode )
 import System.IO      ( IO )
 import Text.Show      ( Show )
 
+-- base-unicode-symbols ----------------
+
+import Data.Bool.Unicode  ( (∧) )
+import Data.Eq.Unicode    ( (≡) )
+
 -- data-default ------------------------
 
 import Data.Default  ( Default( def ) )
+
+-- lens --------------------------------
+
+import Control.Lens.Lens  ( Lens', lens )
 
 -- log-plus ----------------------------
 
 import Log           ( CSOpt( FullCallStack ), Log, ToDoc_( toDoc_ )
                      , logIO, logIOT, logToStderr )
-import Log.LogEntry  ( logEntry )
+import Log.LogEntry  ( LogEntry, logEntry )
 
 -- logging-effect ----------------------
 
@@ -100,25 +109,30 @@ _li1 = do
   logIOT Informational "li1"
   return "MUTO"
 
--- given:
---    -) some logging text (actually, a function from "was it a mock?" to
---       logging text (Mocked → Text)
---    -) a mock value (ω)
---    -) an IO action (IO ω)
--- return:
---    -) A monad which, when told whether to mock, will (a) act (b) log (c)
---       return a value
-
 data DoMock = DoMock | NoMock
   deriving (Eq,Show)
 
-mock ∷ α → α → DoMock → α
-mock m _ DoMock = m
-mock _ a NoMock = a
+class HasDoMock α where
+  doMock ∷ Lens' α DoMock
 
-{- | Create an IO action that may be mocked; and log it. -}
+instance HasDoMock DoMock where
+  doMock = id
+
+{- | Create an IO action that may be mocked; and log it.
+
+     given:
+        -) some logging text (actually, a function from "was it a mock?" to
+           logging text (Mocked → Text)
+        -) a mock value (ω)
+        -) an IO action (IO ω)
+     return:
+        -) A monad which, when told whether to mock, will (a) act (b) log (c)
+           return a value.  The IOClass, and whether the value was actually
+           mocked, are annotated in the log.
+-}
 mkIO' ∷ ∀ ω τ μ α .
-         (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+         (MonadIO μ, ToDoc_ τ,
+          MonadLog (Log ω) μ, Default ω, HasIOClass ω, HasDoMock ω) ⇒
          Severity     -- ^ log severity
        → IOClass      -- ^ log with this IOClass
        → (DoMock → τ) -- ^ log message, is given {Do,No}Mock so message can
@@ -129,7 +143,7 @@ mkIO' ∷ ∀ ω τ μ α .
        → DoMock       -- ^ whether to mock
        → μ α
 mkIO' sv ioc lg mock_value io mck = do
-  logIO sv (def & ioClass ⊢ ioc) (lg mck)
+  logIO sv (def & ioClass ⊢ ioc & doMock ⊢ mck) (lg mck)
   case mck of
     NoMock → liftIO io
     DoMock → liftIO mock_value
@@ -138,38 +152,57 @@ mkIO' sv ioc lg mock_value io mck = do
      (that is surrounded in parens in case of DoMock); and a non-IO mock value.
  -}
 mkIO ∷ ∀ ω τ μ α .
-        (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω, ToDoc_ τ) ⇒
+        (MonadIO μ, ToDoc_ τ, 
+         MonadLog (Log ω) μ, Default ω, HasIOClass ω, HasDoMock ω) ⇒
         Severity → IOClass → τ → α → IO α → DoMock → μ α
 mkIO sv ioc lg mock_value io mck =
   let plog l DoMock = parens (toDoc_ l)
       plog l NoMock = toDoc_ l
    in mkIO' sv ioc (plog lg) (return mock_value) io mck
 
--- XXX simplify logging
--- XXX simple functions for severity
-
 {- This exists here for testing only; real file reading/writing will be in a
    different package. -}
--- enhancements: toDoc(), set mock text
-readFn ∷ ∀ ω μ . (MonadIO μ, MonadLog (Log ω) μ, Default ω, HasIOClass ω) ⇒
+readFn ∷ ∀ ω μ . (MonadIO μ,
+                  MonadLog (Log ω) μ, Default ω, HasIOClass ω, HasDoMock ω) ⇒
          String → DoMock → μ Text
-readFn s = mkIO' Informational IORead (const $ [fmtT|read %s|] s) (return "mock text") $
+readFn s = mkIO' Informational IORead (const $ [fmtT|read %s|] s)
+                                      (return "mock text") $
            readFile s
+
+{- | A unification of IOClass & DoMock for simple mockio logging. -}
+data MockIOClass = MockIOClass IOClass DoMock
+  deriving Show
+
+instance Default MockIOClass where
+  def = MockIOClass def NoMock
+
+instance Equish MockIOClass where
+  (MockIOClass i m) ≃ (MockIOClass i' m') = (i ≃ i') ∧ (m ≡ m')
+
+instance HasIOClass MockIOClass where
+  ioClass = lens (\ (MockIOClass i _) → i)
+                 (\ (MockIOClass _ m) i → MockIOClass i m)
+
+instance HasDoMock MockIOClass where
+  doMock = lens (\ (MockIOClass _ m) → m)
+                 (\ (MockIOClass i _) m → MockIOClass i m)
 
 readFnTests ∷ TestTree
 readFnTests =
   let src_loc     = SrcLoc "main" "MockIO" "src/MockIO.hs" 192 3 192 58
       call_list   = [("logIO"∷String,src_loc)]
+      log_entry   ∷ UTCTime → LogEntry MockIOClass
       log_entry t = logEntry call_list (Just t) Informational
-                             (pretty @Text "read /etc/group") IORead
+                             (pretty @Text "read /etc/group")
+                             (MockIOClass IORead NoMock)
 
-      log_ ∷ UTCTime → Log IOClass
+      log_ ∷ UTCTime → Log MockIOClass
       log_ t       = fromList [ log_entry t ]
 
-      log_string ∷ UTCTime → Log IOClass → String
+      log_string ∷ UTCTime → Log MockIOClass → String
       log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
 
-   in withResource2' (runPureLoggingT $ readFn @IOClass "/etc/group" NoMock)
+   in withResource2' (runPureLoggingT $ readFn @MockIOClass "/etc/group" NoMock)
                      (readFile "/etc/group") $ \ txtlog exptxt →
         testGroup "readFn"
                   [ testCase "txt" $ do (txt,_) ← txtlog
@@ -185,15 +218,17 @@ readFnMockTests ∷ TestTree
 readFnMockTests =
   let src_loc     = SrcLoc "main" "MockIO" "src/MockIO.hs" 192 3 192 58
       call_list   = [("logIO"∷String,src_loc)]
+      log_entry   ∷ UTCTime → LogEntry MockIOClass
       log_entry t = logEntry call_list (Just t) Informational
-                             (pretty @Text "read /etc/group") IORead
+                             (pretty @Text "read /etc/group")
+                             (MockIOClass IORead NoMock)
 
-      log_ ∷ UTCTime → Log IOClass
+      log_ ∷ UTCTime → Log MockIOClass
       log_ t       = fromList [ log_entry t ]
 
       log_string t lg = [fmt|my_log:\n  exp: %w\nvs.\n  got: %w|] (log_ t) lg
 
-   in withResource' (runPureLoggingT $ readFn @IOClass "/etc/group" DoMock) $
+   in withResource' (runPureLoggingT $ readFn "/etc/group" DoMock) $
                     \ txtlog  →
         testGroup "readFn-Mock"
                   [ testCase "txt" $ do (txt,_) ← txtlog
@@ -227,7 +262,7 @@ _testr = runTestsReplay tests
 
 _testm ∷ IO ()
 _testm = do
-  gr ← logToStderr FullCallStack [] $ readFn @IOClass "/etc/group" NoMock
+  gr ← logToStderr FullCallStack [] $ readFn @MockIOClass "/etc/group" NoMock
   putStrLn "---- /etc/group"
   putStrLn gr
   putStrLn "---------------"

@@ -41,7 +41,7 @@ import Data.Text.Prettyprint.Doc.Render.Terminal
                                   ( AnsiStyle, Color( Black, Green, Red, Yellow
                                                     , White )
                                   , bgColorDull, bgColor, bold, color
-                                  , underlined
+                                  , italicized, underlined
                                   )
 
 -- text --------------------------------
@@ -104,7 +104,7 @@ renderSeverityAnsi m =
 --------------------
 
 renderWithSeverityAnsi ∷ HasSeverity τ ⇒ (τ → Doc AnsiStyle) → τ → Doc AnsiStyle
-renderWithSeverityAnsi f m = brackets (renderSeverityAnsi m) ⊞ align (f m)
+renderWithSeverityAnsi f m = annotate italicized $ brackets (renderSeverityAnsi m) ⊞ align (f m)
 
 ----------
 
