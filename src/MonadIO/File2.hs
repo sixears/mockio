@@ -12,7 +12,7 @@ module MonadIO.File2
 
   , access, stat, writable
 
-  , fileWritable
+  , fileWritable, isWritableFile, isWritableDir
 
   , readFileBinary, readHandleBinary, writeFileBinary
 
@@ -24,8 +24,6 @@ module MonadIO.File2
   )
 where
 
-import Debug.Trace  ( trace, traceShow )
-
 -- base --------------------------------
 
 import qualified  System.IO
@@ -33,10 +31,8 @@ import qualified  System.IO
 import Control.Monad           ( join, return )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Bool               ( Bool( False, True ), bool )
-import Data.Either             ( Either( Right ) )
 import Data.Eq                 ( Eq )
 import Data.Function           ( ($) )
-import Data.Functor            ( fmap )
 import Data.Maybe              ( Maybe( Just, Nothing ), fromMaybe )
 import Data.String             ( String )
 import System.Exit             ( ExitCode )
@@ -58,18 +54,17 @@ import Data.ByteString  ( ByteString )
 
 -- data-textual ------------------------
 
-import Data.Textual  ( Printable, toString )
+import Data.Textual  ( toString )
 
 -- fpath -------------------------------
 
 import FPath.AbsDir       ( absdir )
 import FPath.AbsFile      ( absfile )
-import FPath.AsFilePath2  ( AsFilePath( filepath ), exterminate, filepath' )
+import FPath.AsFilePath2  ( AsFilePath( filepath ), exterminate )
 import FPath.DirLike      ( IsDir )
 import FPath.File2        ( File )
-import FPath.FileLike2    ( FileLike, IsFile )
-import FPath.FPath2       ( FPathAs )
-import FPath.Parent       ( parentMay )
+import FPath.FileLike2    ( IsFile )
+import FPath.Parent       ( parent )
 
 -- lens --------------------------------
 
@@ -140,6 +135,7 @@ fexists f = fromMaybe NoFExists ⩺ squashInappropriateTypeT ∘ asIOError $
 
 ----------
 
+fexistsTests ∷ TestTree
 fexistsTests =
   let testFExists expect input =
         testCase (toString input) $
@@ -171,6 +167,7 @@ fexists' f = fromMaybe NoFExists ⩺ squashInappropriateTypeT ∘ asIOError $
 
 ----------
 
+fexists'Tests ∷ TestTree
 fexists'Tests =
   let testFExists' expect input =
         testCase (toString input) $
@@ -437,14 +434,12 @@ fileWritable ∷ ∀ α ε μ .
                (MonadIO μ, IsFile α, AsFilePath α, AsIOError ε, MonadError ε μ)⇒
                α → μ (Maybe Text)
 fileWritable fn = do
-  stat fn ≫ \ x → case x of
+  stat fn ≫ \ case
     Just st → _isWritableFile fn (Just st)
     Nothing → -- fn does not exist; does it have a writeable dir parent?
-              case fn ⊣ parentMay of
-                Just p → do iwd ← isWritableDir p
-                            case iwd of
-                              Nothing → return Nothing
-                              Just e  → return ∘ Just $ [fmt|%t (%T)|] e fn
+              isWritableDir (fn ⊣ parent) ≫ \ case
+                   Nothing → return Nothing
+                   Just e  → return ∘ Just $ [fmt|%t (%T)|] e fn
 
 ----------
 

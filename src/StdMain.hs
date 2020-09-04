@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TypeFamilies      #-}
@@ -13,6 +14,7 @@ where
 import Control.Applicative     ( pure )
 import Control.Exception       ( Exception )
 import Control.Monad.IO.Class  ( MonadIO )
+import Data.Either             ( Either( Left, Right ) )
 import Data.Function           ( ($) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String, unwords, words )
@@ -51,20 +53,22 @@ import MockIO.IOClass  ( HasIOClass, (∈), ioClass )
 
 -- monaderror-io -----------------------
 
+import MonadError           ( ѥ )
 import MonadError.IO.Error  ( AsIOError )
 
 -- monadio-plus ------------------------
 
-import MonadIO.File2  ( IOMode( WriteMode ), withFileT )
+import MonadIO.File2  ( IOMode( WriteMode ), fileWritable, withFileT )
 
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣) )
+import Data.MoreUnicode.Monad    ( (≫) )
 
 -- mtl ---------------------------------
 
-import Control.Monad.Except  ( ExceptT )
+import Control.Monad.Except  ( ExceptT, throwError )
 import Control.Monad.Reader  ( ReaderT, runReaderT )
 
 -- natural-plus ------------------------
@@ -101,7 +105,7 @@ import StdMain.StdOptions      ( DryRunLevel, HasDryRunLevel( dryRunLevel )
                                , StdOptions
                                , ifDryRun, options, parseStdOptions
                                )
-import StdMain.UsageError      ( AsUsageError, UsageIOError )
+import StdMain.UsageError      ( AsUsageError, UsageIOError, throwUsage )
 import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
                                , verboseDesc, verboseOptions )
 
@@ -177,12 +181,18 @@ stdMain_ n desc p io = do
                    , \ le → if le ⊣ severity ≤ sevOpt then [le] else []
                    , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
                    ]
+      logIOToFile v i o' h = logToFile (v ⊣ csopt) filters h (i o')
+
 
   Exited.doMain $
     case vopts ⊣ logFile of
       Nothing    → logToStderr (vopts ⊣ csopt) filters (io o)
-      Just logfn → withFileT (unLogFile logfn) WriteMode $ \ h →
-                     logToFile (vopts ⊣ csopt) filters h (io o)
+      Just logfn → ѥ (fileWritable (unLogFile logfn)) ≫ \ case 
+                     Left e         → throwError e
+                     Right (Just e) → throwUsage $ "bad log file: " ⊕ e
+                     Right Nothing  → withFileT (unLogFile logfn) WriteMode $
+                                        logIOToFile vopts io o
+
 
 ----------
 
