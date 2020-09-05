@@ -38,7 +38,8 @@ import Exited2  ( ToExitCode )
 
 -- log-plus ----------------------------
 
-import Log              ( Log, logToFile, logFilter, logToStderr )
+import Log              ( Log
+                        , logToFile', logFilter, logToStderr', stdRenderers )
 import Log.LogEntry     ( LogEntry, attrs, mapPrefixDoc )
 import Log.HasSeverity  ( severity )
 
@@ -48,8 +49,9 @@ import Control.Monad.Log  ( LoggingT )
 
 -- mockio ------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ) )
-import MockIO.IOClass  ( HasIOClass, (∈), ioClass )
+import MockIO               ( DoMock( DoMock, NoMock ), HasDoMock, MockIOClass )
+import MockIO.IOClass       ( HasIOClass, (∈), ioClass )
+import MockIO.RenderDoMock  ( renderLogWithDoMock )
 
 -- monaderror-io -----------------------
 
@@ -116,7 +118,7 @@ import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
 
 stdMain_ ∷ ∀ ε α σ ω ν μ .
            (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-            ToExitCode σ, HasIOClass ω) ⇒
+            ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
            Natty ν
          → Text
          → Parser α
@@ -181,12 +183,12 @@ stdMain_ n desc p io = do
                    , \ le → if le ⊣ severity ≤ sevOpt then [le] else []
                    , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
                    ]
-      logIOToFile v i o' h = logToFile (v ⊣ csopt) filters h (i o')
+      logIOToFile v i o' h = logToFile' (stdRenderers $ v ⊣ csopt) filters h (i o')
 
 
   Exited.doMain $
     case vopts ⊣ logFile of
-      Nothing    → logToStderr (vopts ⊣ csopt) filters (io o)
+      Nothing    → logToStderr' (renderLogWithDoMock : stdRenderers (vopts ⊣ csopt)) filters (io o)
       Just logfn → ѥ (fileWritable (unLogFile logfn)) ≫ \ case 
                      Left e         → throwError e
                      Right (Just e) → throwUsage $ "bad log file: " ⊕ e
@@ -207,7 +209,7 @@ stdMain_ n desc p io = do
  -}
 stdMain ∷ ∀ ε α σ ω ν μ .
           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-           ToExitCode σ, HasIOClass ω) ⇒
+           ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
           Natty ν
         → Text
         → Parser α
@@ -220,7 +222,7 @@ type LogTIO ω ε = (LoggingT (Log ω) (ExceptT ε IO))
 
 stdMainx ∷ ∀ ε α σ ω ν μ .
           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-           ToExitCode σ, HasIOClass ω) ⇒
+           ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
           Natty ν
         → Text
         → Parser α
@@ -238,10 +240,10 @@ stdMainx n desc p io =
      Note that although the `io` arg. is typed to a `ReaderT`, much simpler
      types - e.g., `MonadIO ⇒ μ ()`, or `MonadIO ⇒ μ ExitCode` - will suffice.
  -}
-stdMain' ∷ ∀ ω ρ σ μ . (MonadIO μ, ToExitCode σ, HasIOClass ω) ⇒
+stdMain' ∷ ∀ ρ σ μ . (MonadIO μ, ToExitCode σ) ⇒
            Text
          → Parser ρ
-         → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO ω UsageIOError) σ)
+         → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO MockIOClass UsageIOError) σ)
          → μ ()
 stdMain' desc parser io =
   let go opts = do

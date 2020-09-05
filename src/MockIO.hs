@@ -9,8 +9,7 @@ where
 -- base --------------------------------
 
 import Control.Monad  ( return )
-import Data.Eq        ( Eq )
-import Data.Function  ( ($), (&), const, id )
+import Data.Function  ( ($), (&), const )
 import Data.Maybe     ( Maybe( Just ) )
 import Data.String    ( String )
 import GHC.Exts       ( fromList )
@@ -30,7 +29,7 @@ import Data.Default  ( Default( def ) )
 
 -- lens --------------------------------
 
-import Control.Lens.Lens  ( Lens', lens )
+import Control.Lens.Lens  ( lens )
 
 -- log-plus ----------------------------
 
@@ -89,7 +88,9 @@ import Text.Fmt  ( fmt, fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO.IOClass  ( HasIOClass( ioClass ), IOClass( IORead ) )
+import MockIO.DoMock        ( DoMock( DoMock, NoMock ), HasDoMock( doMock ) )
+import MockIO.IOClass       ( HasIOClass( ioClass ), IOClass( IORead ) )
+-- import MockIO.RenderDoMock  ( renderWithDoMockAnsi )
 
 --------------------------------------------------------------------------------
 
@@ -108,15 +109,6 @@ _li1 = do
   _ ← _li0
   logIOT Informational "li1"
   return "MUTO"
-
-data DoMock = DoMock | NoMock
-  deriving (Eq,Show)
-
-class HasDoMock α where
-  doMock ∷ Lens' α DoMock
-
-instance HasDoMock DoMock where
-  doMock = id
 
 {- | Create an IO action that may be mocked; and log it.
 

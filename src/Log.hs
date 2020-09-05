@@ -24,8 +24,8 @@ module Log
   , log, logMsg, log', logMsg', logT, logMsgT, logT', logMsgT'
   , logIO, logIO', logIOT
   , logRender, logRender'
-  , logToFD', logToFD, logToFile, logToStderr
-  , stackOptions, stackParses
+  , logToFD', logToFD, logToFile, logToFile', logToStderr, logToStderr'
+  , stackOptions, stackParses, stdRenderers
   , logFilter, mapLog, mapLogE
   -- test data
   , tests, _log0, _log0m, _log1, _log1m )
@@ -500,7 +500,7 @@ renderMapLog' renderer trx le = vsep' ∘ renderMapLog renderer trx $ osingle le
 
 {- | Transform a monad ready to return (rather than effect) the logging. -}
 logRender ∷ Monad η ⇒
-            LogRenderOpts
+            LogRenderOpts ω
           → [LogTransformer ω] -- log transformers, folded in order
                                -- from right-to-left
           → PureLoggingT (Log ω) η α
@@ -517,7 +517,7 @@ logRender lro trx a = do
 
 {- | `logRender` with `()` is sufficiently common to warrant a cheap alias. -}
 logRender' ∷ Monad η ⇒
-             LogRenderOpts → [LogTransformer ω] → PureLoggingT (Log ω) η ()
+             LogRenderOpts ω → [LogTransformer ω] → PureLoggingT (Log ω) η ()
            → η [Text]
 logRender' opts trx lg = snd ⊳ (logRender opts trx lg)
 
@@ -713,7 +713,7 @@ logToHandle renderIO renderEntry Nothing width fh io =
 {- | Write a Log to a filehandle, with given options but no adornments. -}
 logToHandleNoAdornments ∷ (MonadIO μ, MonadMask μ) ⇒
                           Maybe BatchingOptions
-                        → LogRenderOpts
+                        → LogRenderOpts ω
                         → [LogTransformer ω]
                         → Handle
                         → LoggingT (Log ω) μ α
@@ -729,7 +729,7 @@ logToHandleNoAdornments bopts lro trx =
 {- | Write a Log to a filehandle, with given options and Ansi adornments. -}
 logToHandleAnsi ∷ (MonadIO μ, MonadMask μ) ⇒
                   Maybe BatchingOptions
-                → LogRenderOpts
+                → LogRenderOpts ω
                 → [LogTransformer ω]
                 → Handle
                 → LoggingT (Log ω) μ α
@@ -744,7 +744,7 @@ logToHandleAnsi bopts lro trx =
 
 {- | Log to a regular file, with unbounded width. -}
 logToFile' ∷ (MonadIO μ, MonadMask μ) ⇒
-             [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+             [LogAnnotator ω] → [LogTransformer ω] →Handle →LoggingT (Log ω) μ α
            → μ α
 logToFile' ls trx =
   let lro = logRenderOpts' ls Unbounded
@@ -754,7 +754,7 @@ logToFile' ls trx =
 
 {- | Log to a tty, using current terminal width. -}
 logToTTY' ∷ (MonadIO μ, MonadMask μ) ⇒
-            [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+            [LogAnnotator ω] → [LogTransformer ω] → Handle →LoggingT (Log ω) μ α
           → μ α
 logToTTY' ls trx h io = do
   size ← liftIO $ TerminalSize.size
@@ -769,7 +769,7 @@ logToTTY' ls trx h io = do
 {- | Log to a file handle; if it looks like a terminal, use Ansi logging and low
      batch time; else go unadorned with higher batch time. -}
 logToFD' ∷ (MonadIO μ, MonadMask μ) ⇒
-           [LogAnnotator] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
+           [LogAnnotator ω] → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α
          → μ α
 logToFD' ls trx h io = do
   isatty ← liftIO $ hIsTerminalDevice h
@@ -808,31 +808,25 @@ instance Parsecable CSOpt where
   parser =
     tries [ caseInsensitiveString st ⋫ return cso | (st,cso) ← stackOptions ]
 
+stdRenderers ∷ CSOpt → [LogAnnotator ω]
+stdRenderers NoCallStack =
+  [ renderLogWithTimestamp, renderLogWithSeverity ] 
+stdRenderers CallStackHead =
+  [ renderLogWithTimestamp, renderLogWithSeverity, renderLogWithStackHead ] 
+stdRenderers FullCallStack =
+  [ renderLogWithCallStack, renderLogWithTimestamp, renderLogWithSeverity ]
+
 {- | Log to a plain file with given callstack choice, and given annotators. -}
 logToFile ∷ (MonadIO μ, MonadMask μ) ⇒
             CSOpt → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
-logToFile NoCallStack trx =
-  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity ] trx
-logToFile CallStackHead trx =
-  logToFile' [ renderLogWithTimestamp, renderLogWithSeverity
-             , renderLogWithStackHead ] trx
-logToFile FullCallStack trx =
-  logToFile' [ renderLogWithCallStack, renderLogWithTimestamp
-             , renderLogWithSeverity ] trx
+logToFile cso trx = logToFile' (stdRenderers cso) trx
 
 --------------------
 
 {- | Log to a terminal with given callstack choice. -}
 logToTTY ∷ (MonadIO μ, MonadMask μ) ⇒
            CSOpt → [LogTransformer ω] → Handle → LoggingT (Log ω) μ α → μ α
-logToTTY NoCallStack trx =
-  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity ] trx
-logToTTY CallStackHead trx =
-  logToTTY' [ renderLogWithTimestamp, renderLogWithSeverity
-            , renderLogWithStackHead ] trx
-logToTTY FullCallStack trx =
-  logToTTY' [ renderLogWithCallStack, renderLogWithTimestamp
-            , renderLogWithSeverity ] trx
+logToTTY cso trx = logToTTY' (stdRenderers cso) trx
 
 --------------------
 
@@ -853,6 +847,10 @@ logToFD cso trx h io = do
 logToStderr ∷ (MonadIO μ, MonadMask μ) ⇒
               CSOpt → [LogTransformer ω] → LoggingT (Log ω) μ α → μ α
 logToStderr cso trx = logToTTY cso trx stderr
+
+logToStderr' ∷ (MonadIO μ, MonadMask μ) ⇒
+               [LogAnnotator ω] → [LogTransformer ω] → LoggingT (Log ω) μ α→ μ α
+logToStderr' annos trx = logToTTY' annos trx stderr
 
 {- | Log to a handle, assuming it's a terminal, with no log decorations. -}
 logToTTYPlain ∷ (MonadIO μ, MonadMask μ) ⇒
