@@ -6,16 +6,16 @@
 {-# LANGUAGE UnicodeSyntax         #-}
 
 module Log.LogRenderOpts
-  ( LogAnnotator( LogAnnotator ), LogRenderOpts
+  ( LogR, LogRenderOpts
 
   , logRenderOpts'
 
   , lroOpts, lroRenderPlain, lroRenderSevCS, lroRenderSevCSH
   , lroRenderTSSev, lroRenderTSSevCS, lroRenderTSSevCSH
-  , lroRenderer, lroRendererAnsi, lroWidth
+  , lroRenderer, lroWidth
 
-  , renderLogWithCallStack, renderLogWithSeverity, renderLogWithStackHead
-  , renderLogWithTimestamp
+  , renderWithCallStack, renderWithSeverity, renderWithStackHead
+  , renderWithTimestamp
 
   , tests
   )
@@ -78,7 +78,9 @@ import Data.Text.Prettyprint.Doc.Render.Text      ( renderStrict )
 
 -- prettyprinter-ansi-terminal ---------
 
-import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle, renderIO )
+
+import qualified  Data.Text.Prettyprint.Doc.Render.Terminal  as  Terminal
+import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle )
 
 -- tasty -------------------------------
 
@@ -114,24 +116,32 @@ import Log.Render        ( renderWithCallStack, renderWithSeverity
 
 --------------------------------------------------------------------------------
 
--- type LogR α = ∀ ω . (LogEntry ω → Doc α) → LogEntry ω → Doc α
-type LogR ω α = (LogEntry ω → Doc α) → LogEntry ω → Doc α
-data LogAnnotator ω = LogAnnotator { _renderTTY   ∷ LogR ω AnsiStyle
-                                   , _renderNoTTY ∷ LogR ω ()
-                                   }
+type LogR ω = (LogEntry ω → Doc AnsiStyle) → LogEntry ω → Doc AnsiStyle
 
-newtype LogRenderer ω = LogRenderer { unLogRenderer ∷ [LogAnnotator ω] }
+------------------------------------------------------------
 
-type instance Element (LogRenderer ω) = (LogAnnotator ω)
+newtype LogRenderer ω = LogRenderer { unLogRenderer ∷ [LogR ω] }
+
+--------------------
+
+type instance Element (LogRenderer ω) = (LogR ω)
+
+--------------------
+
 instance MonoFunctor (LogRenderer ω) where
   omap f (LogRenderer ls) = LogRenderer (f ⊳ ls)
 
+----------------------------------------
 
 class HasLogRenderer ω α where
   logRenderer ∷ Lens' α (LogRenderer ω)
 
+--------------------
+
 instance HasLogRenderer ω (LogRenderer ω) where
   logRenderer = id
+
+------------------------------------------------------------
 
 data LogRenderOpts ω =
   LogRenderOpts { {-| List of log annotators; applied in list order, tail of the
@@ -143,14 +153,20 @@ data LogRenderOpts ω =
                 , _lroWidth        ∷ PageWidth
                 }
 
+--------------------
+
 instance Default (LogRenderOpts ω) where
   def = LogRenderOpts (LogRenderer []) Unbounded
+
+--------------------
 
 instance HasLogRenderer ω (LogRenderOpts ω) where
   logRenderer ∷ Lens' (LogRenderOpts ω) (LogRenderer ω)
   logRenderer = lens _lroRenderers (\ opts rs → opts { _lroRenderers = rs })
 
-logRenderOpts' ∷ [LogAnnotator ω] → PageWidth → LogRenderOpts ω
+------------------------------------------------------------
+
+logRenderOpts' ∷ [LogR ω] → PageWidth → LogRenderOpts ω
 logRenderOpts' as w = LogRenderOpts (LogRenderer as) w
 
 {- | `LogRenderOpts` with no adornments.  Page width is `Unbounded`; you can
@@ -195,38 +211,13 @@ lroRenderTSSevCSH =
                  , renderLogWithStackHead ]
                 Unbounded
 
--- we need this to fix the type; a simple replace of logR with its definition in
--- logRenderer{,Ansi} leads to
---
--- src/Log/LogRenderOpts.hs:210:49: error:
---  • Ambiguous type variable ‘ω0’ arising from a use of ‘logRenderer’
---    prevents the constraint ‘(HasLogRenderer
---                                ω0 (LogRenderOpts ω))’ from being solved.
--- ...
---  |    in foldf (_renderNoTTY ⊳ unLogRenderer (view logRenderer $ opts))
---                                                    ^^^^^^^^^^^
-
-logR ∷ LogRenderOpts ω → LogRenderer ω
-logR = view logRenderer
-
 {- | A single renderer for a LogEntry, using the renderers selected in
      LogRenderOpts. -}
-lroRenderer ∷ LogRenderOpts ω → LogEntry ω → Doc ()
+lroRenderer ∷ LogRenderOpts ω → LogEntry ω → Doc AnsiStyle
 lroRenderer opts =
   let foldf ∷ Foldable ψ ⇒ ψ (α → α) → α → α
       foldf = flip (foldr ($))
-   in foldf (_renderNoTTY ⊳ unLogRenderer (logR opts))
-            (view LogEntry.logdoc)
-
-{- | A single renderer for a LogEntry, using the renderers selected in
-     LogRenderOpts; this one produces doc with AnsiStyle annotations for
-     rendering to an ANSI-compatible terminal.
--}
-lroRendererAnsi ∷ LogRenderOpts ω → LogEntry ω → Doc AnsiStyle
-lroRendererAnsi opts =
-  let foldf ∷ Foldable ψ ⇒ ψ (α → α) → α → α
-      foldf = flip (foldr ($))
-   in foldf (_renderTTY ⊳ unLogRenderer (logR opts))
+   in foldf (unLogRenderer (opts ⊣ logRenderer))
             (reAnnotate ф ∘ view LogEntry.logdoc)
 
 lroRendererTests ∷ TestTree
@@ -302,49 +293,48 @@ lroOpts = lens (LayoutOptions ∘ _lroWidth)
 
 ----------
 
-renderLogWithSeverity ∷ LogAnnotator ω
-renderLogWithSeverity = LogAnnotator renderWithSeverityAnsi renderWithSeverity
+renderLogWithSeverity ∷ LogR ω
+renderLogWithSeverity = renderWithSeverityAnsi
 
 ----------
 
-renderLogWithTimestamp ∷ LogAnnotator ω
-renderLogWithTimestamp = LogAnnotator renderWithTimestamp renderWithTimestamp
+renderLogWithTimestamp ∷ LogR ω
+renderLogWithTimestamp = renderWithTimestamp
 
 ----------
 
-renderLogWithStackHead ∷ LogAnnotator ω
-renderLogWithStackHead = LogAnnotator renderWithStackHead renderWithStackHead
+renderLogWithStackHead ∷ LogR ω
+renderLogWithStackHead = renderWithStackHead
 
 ----------
 
-renderLogWithCallStack ∷ LogAnnotator ω
-renderLogWithCallStack = LogAnnotator renderWithCallStack renderWithCallStack
+renderLogWithCallStack ∷ LogR ω
+renderLogWithCallStack = renderWithCallStack
 
 ----------
 
-renderLogWithSeverityAndTimestamp ∷ LogAnnotator ω
-renderLogWithSeverityAndTimestamp =
-  LogAnnotator renderWithSeverityAndTimestamp renderWithSeverityAndTimestamp
+renderLogWithSeverityAndTimestamp ∷ LogR ω
+renderLogWithSeverityAndTimestamp = renderWithSeverityAndTimestamp
 
 --------------------
 
-renderLogEntriesAnsi ∷ (MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
+renderLogEntries ∷ (MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
                        LogRenderOpts ω → χ → Doc AnsiStyle
-renderLogEntriesAnsi opts =
-  (⊕ line) ∘ (vsep ∘ fmap (lroRendererAnsi opts) ∘ otoList)
+renderLogEntries opts = (⊕ line) ∘ (vsep ∘ fmap (lroRenderer opts) ∘ otoList)
 
-renderIOAnsi ∷ (MonadIO μ, MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
-               Handle → LogRenderOpts ω → χ → μ ()
-renderIOAnsi h o =
-  liftIO ∘ renderIO h ∘ layoutPretty (o ⊣ lroOpts) ∘ renderLogEntriesAnsi o
+renderIO ∷ (MonadIO μ, MonoFoldable χ, Element χ ~ LogEntry ω) ⇒
+           Handle → LogRenderOpts ω → χ → μ ()
+renderIO h o =
+  liftIO ∘ Terminal.renderIO h ∘ layoutPretty (o ⊣ lroOpts) ∘ renderLogEntries o
 
 {-| Test ANSI rendering; designed to run just to stderr, rather than within
     a Tasty test harness -}
 ansiTests ∷ IO ()
-ansiTests = let mkle sev = logEntry @[(String,SrcLoc)] @() [] Nothing sev (pretty $ show sev) ()
+ansiTests = let mkle sev = logEntry @[(String,SrcLoc)] @()
+                                    [] Nothing sev (pretty $ show sev) ()
                 logs = mkle ⊳ [ Emergency, Alert, Critical, Error, Warning
                               , Notice, Informational, Debug ]
-             in renderIOAnsi stdout lroRenderSev logs
+             in renderIO stdout lroRenderSev logs
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --

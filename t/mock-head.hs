@@ -95,7 +95,6 @@ parseOptions = Options ⊳ strArgument (metavar "FILE")
 main ∷ IO ()
 main = -- XXX Tidy This Up
        -- add 'append' to log file options
-       -- more visually obvious dry-runness; e.g., colour, italics?
        -- log rolling!
        -- only dump footer with --help  or --longhelp?
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go

@@ -51,7 +51,7 @@ import Control.Monad.Log  ( LoggingT )
 
 import MockIO               ( DoMock( DoMock, NoMock ), HasDoMock, MockIOClass )
 import MockIO.IOClass       ( HasIOClass, (∈), ioClass )
-import MockIO.RenderDoMock  ( renderLogWithDoMock )
+import MockIO.RenderDoMock  ( renderWithDoMock )
 
 -- monaderror-io -----------------------
 
@@ -175,25 +175,28 @@ stdMain_ n desc p io = do
   let vopts      = o ⊣ verboseOptions
       ioClasses  = vopts ⊣ ioClassFilter
       sevOpt     = o ⊣ severity
+      renderers  = renderWithDoMock : stdRenderers (vopts ⊣ csopt)
 
       prefixIOC ∷ ∀ α β . HasIOClass α ⇒ LogEntry α → PPDoc.Doc β
       prefixIOC le =
         PPDoc.braces (PPDoc.pretty ∘ toText $ le ⊣ attrs∘ioClass) ⊕ PPDoc.space
-      filters    = [ pure ∘ mapPrefixDoc prefixIOC
+      filters    = [
+        -- XXX ONLY IF SELECTED IN OPTIONS
+                     pure ∘ mapPrefixDoc prefixIOC
                    , \ le → if le ⊣ severity ≤ sevOpt then [le] else []
                    , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
                    ]
-      logIOToFile v i o' h = logToFile' (stdRenderers $ v ⊣ csopt) filters h (i o')
+      logIOToFile i o' h = logToFile' renderers filters h (i o')
 
 
   Exited.doMain $
     case vopts ⊣ logFile of
-      Nothing    → logToStderr' (renderLogWithDoMock : stdRenderers (vopts ⊣ csopt)) filters (io o)
+      Nothing    → logToStderr' renderers filters (io o)
       Just logfn → ѥ (fileWritable (unLogFile logfn)) ≫ \ case 
                      Left e         → throwError e
                      Right (Just e) → throwUsage $ "bad log file: " ⊕ e
                      Right Nothing  → withFileT (unLogFile logfn) WriteMode $
-                                        logIOToFile vopts io o
+                                        logIOToFile io o
 
 
 ----------

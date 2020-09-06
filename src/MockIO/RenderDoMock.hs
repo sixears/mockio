@@ -2,7 +2,7 @@
 {-# LANGUAGE UnicodeSyntax     #-}
 
 module MockIO.RenderDoMock
-  ( renderLogWithDoMock )
+  ( renderWithDoMock )
 where
 
 -- base --------------------------------
@@ -17,7 +17,7 @@ import Data.Function.Unicode  ( (∘) )
 -- log-plus ----------------------------
 
 import Log.LogEntry       ( LogEntry, attrs )
-import Log.LogRenderOpts  ( LogAnnotator( LogAnnotator ) )
+import Log.LogRenderOpts  ( LogR )
 
 -- more-unicode ------------------------
 
@@ -36,18 +36,10 @@ import MockIO.DoMock        ( DoMock( DoMock ), HasDoMock( doMock ) )
 
 --------------------------------------------------------------------------------
 
-renderWithDoMockAnsi ∷ HasDoMock τ ⇒
-                       (LogEntry τ → Doc AnsiStyle) → LogEntry τ → Doc AnsiStyle
-renderWithDoMockAnsi f m = if m ⊣ attrs ∘ doMock ≡ DoMock
+renderWithDoMock ∷ HasDoMock τ ⇒ LogR τ
+
+renderWithDoMock f m = if m ⊣ attrs ∘ doMock ≡ DoMock
                            then annotate italicized $ f m
                            else f m
-
-renderWithDoMock ∷ (LogEntry τ → Doc ()) → LogEntry τ → Doc ()
-renderWithDoMock f m = f m
-
-----------
-
-renderLogWithDoMock ∷ HasDoMock τ ⇒ LogAnnotator τ
-renderLogWithDoMock = LogAnnotator renderWithDoMockAnsi renderWithDoMock
 
 -- that's all, folks! ----------------------------------------------------------
