@@ -7,8 +7,10 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module StdMain.VerboseOptions
-  ( LogFile( unLogFile ), HasVerboseOptions( verboseOptions ), VerboseOptions
-  , csopt, defVOpts, ioClassFilter, logFile, verboseDesc )
+  ( LogFile( unLogFile ), HasVerboseOptions( verboseOptions )
+  , ShowIOCs( DoShowIOCs, NoShowIOCs ), VerboseOptions
+  , csopt, defVOpts, ioClassFilter, logFile, showIOCs, verboseDesc
+  )
 where
 
 import GHC.Exts  ( fromList )
@@ -74,7 +76,7 @@ import MonadError2  ( mErrFail )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋫), ю, ℕ )
+import Data.MoreUnicode  ( (∤), (≫), (⊳), (⊵), (⋪), (⋫), ю, ℕ )
 
 -- natural-plus ------------------------
 
@@ -93,8 +95,8 @@ import OptParsePlus2  ( (⊞), finalFullStop, listDQOr, listDQSlash, listW, toDo
 -- parsec -----------------------------
 
 import Text.Parsec.Char        ( char, letter, noneOf, oneOf )
-import Text.Parsec.Combinator  ( between, option, optionMaybe, sepBy )
-import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, try )
+import Text.Parsec.Combinator  ( between, eof, option, optionMaybe, sepBy )
+import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, parse, try )
 
 -- parsec-plus -------------------------
 
@@ -132,6 +134,12 @@ import Text.Fmt  ( fmt )
 
 --------------------------------------------------------------------------------
 
+{- | Whether to show IOClasses on log output -}
+data ShowIOCs = NoShowIOCs | DoShowIOCs
+  deriving (Eq,Show)
+
+------------------------------------------------------------
+
 newtype LogFile = LogFile { unLogFile ∷ File }
   deriving (Eq,Printable,Show)
 
@@ -147,6 +155,7 @@ data VerboseOptions =
                  , _ioClassFilter ∷ IOClassSet
                  , _callstack     ∷ CSOpt
                  , _logFile       ∷ Maybe LogFile
+                 , _showIOCs      ∷ ShowIOCs -- ^ show ioclasses
                  }
   deriving (Eq,Show)
 
@@ -160,10 +169,10 @@ instance HasVerboseOptions VerboseOptions where
 
 instance Printable VerboseOptions where
   -- just for easier visibility during debugging
-  print (VerboseOptions sev ioclasses cso Nothing) =
-    P.text $ [fmt|%w-%T-<%w>-|] sev ioclasses cso
-  print (VerboseOptions sev ioclasses cso (Just logfile)) =
-    P.text $ [fmt|%w-%T-<%w>-%T|] sev ioclasses cso logfile
+  print (VerboseOptions sev ioclasses cso Nothing show_iocs) =
+    P.text $ [fmt|%w-%T-<%w>-(%w)|] sev ioclasses cso show_iocs
+  print (VerboseOptions sev ioclasses cso (Just logfile) show_iocs) =
+    P.text $ [fmt|%w-%T-<%w>-%T(%w)|] sev ioclasses cso logfile show_iocs
 
 ----------------------------------------
 
@@ -173,7 +182,7 @@ instance HasSeverity VerboseOptions where
 ----------------------------------------
 
 defVOpts ∷ Severity → VerboseOptions
-defVOpts sev = VerboseOptions sev ioClasses NoCallStack Nothing
+defVOpts sev = VerboseOptions sev ioClasses NoCallStack Nothing NoShowIOCs
 
 ----------------------------------------
 
@@ -187,39 +196,59 @@ csopt = lens _callstack (\ o c → o { _callstack = c })
 
 ----------------------------------------
 
+showIOCs ∷ Lens' VerboseOptions ShowIOCs
+showIOCs = lens _showIOCs (\ o s → o { _showIOCs = s })
+
+----------------------------------------
+
 ioClassFilter ∷ Lens' VerboseOptions IOClassSet
 ioClassFilter = lens _ioClassFilter (\ o iocs → o { _ioClassFilter = iocs })
 
 ----------------------------------------
 
-data LogCfgElement = LogCfgIOClassSet IOClassSet | LogCfgCSOpt CSOpt
+data LogCfgElement = LogCfgIOClassSet IOClassSet
+                   | LogCfgCSOpt      CSOpt
+                   | LogCfgShowIOCs
   deriving (Eq,Show)
 
 instance Parsecable LogCfgElement where
-  parser = let ciString = caseInsensitiveString
-               ioc_tag = tries $ ciString "ioclasses" :| [ ciString "ioclass" ]
-            in LogCfgCSOpt ⊳ parser
-             ∤ LogCfgIOClassSet ⊳ (ioc_tag ⋫ char '=' ⋫ parser)
+  parser = let ciString  = caseInsensitiveString
+               ioc_tag   = tries $ ciString "ioclasses" :| [ciString "ioclass"]
+               show_iocs =
+                 tries $ ciString "show-ioclasses" :| [ciString "show-iocs"]
+              in tries $    (pure LogCfgShowIOCs ⋪ show_iocs)
+                         :| [ LogCfgCSOpt ⊳ parser
+                            , LogCfgIOClassSet ⊳ (ioc_tag ⋫ char '=' ⋫ parser)
+                            ]
+
+
+newtype LogCfg = LogCfg { unLogCfg ∷ (IOClassSet,CSOpt,ShowIOCs) }
+  deriving (Eq, Show)
+
+type LogCfgY = (Maybe IOClassSet,Maybe CSOpt,ShowIOCs)
 
 parseElements ∷ MonadFail η ⇒ [LogCfgElement] → η LogCfg
 parseElements lces = do
   let -- f ∷ LogCfgY → LogCfgElement → η LogCfgY
-      f (Nothing, csoY) (LogCfgIOClassSet iocs) = return (Just iocs, csoY)
-      f (Just iocs,_ ) (LogCfgIOClassSet iocs') =
+      f (Nothing, c, s) (LogCfgIOClassSet iocs) = return (Just iocs, c, s)
+      f (Just iocs, _, _) (LogCfgIOClassSet iocs') =
         fail $ [fmt|Cannot re-assign ioclasses '%w' (was '%w')|] iocs iocs'
-      f (iocsY, Nothing) (LogCfgCSOpt cso) = return (iocsY, Just cso)
-      f (_, Just cso) (LogCfgCSOpt cso') =
+
+      f (i, Nothing, s) (LogCfgCSOpt cso) = return (i, Just cso, s)
+      f (_, Just cso, _) (LogCfgCSOpt cso') =
         fail $ [fmt|Cannot re-assign stack option '%w' (was '%w')|] cso cso'
+
+      f (i, c, NoShowIOCs) LogCfgShowIOCs = return (i, c, DoShowIOCs)
+      f (_, _, DoShowIOCs) LogCfgShowIOCs =
+        fail "duplicate show-ioclasses option (or show-iocs)"
+
       g ∷ LogCfgY → LogCfg
-      g (iocsY, csoY) =
-        LogCfg (fromMaybe ioClasses iocsY, fromMaybe NoCallStack csoY)
-  (iocsY, csoY) ← foldM f (Nothing,Nothing) lces
-  return $ g (iocsY,csoY)
+      g (iocsY, csoY, s) =
+        LogCfg (fromMaybe ioClasses iocsY, fromMaybe NoCallStack csoY, s)
 
+  (iocsY, csoY, s) ← foldM f (Nothing,Nothing,NoShowIOCs) lces
+  return $ g (iocsY,csoY, s)
 
-newtype LogCfg = LogCfg { unLogCfg ∷ (IOClassSet,CSOpt) }
-  deriving (Eq, Show)
-type LogCfgY = (Maybe IOClassSet,Maybe CSOpt)
 
 ----------------------------------------
 
@@ -227,23 +256,22 @@ instance Parsecable LogCfg where
   -- '^' was selected as being a character less likely to be required in
   -- config values, but not requiring escaping with regular shells (e.g., bash)
   parser = let braces = between (char '{') (char '}')
-            in option (LogCfg (ioClasses, NoCallStack)) ∘ braces $
+            in option (LogCfg (ioClasses, NoCallStack, NoShowIOCs)) ∘ braces $
                  parser `sepBy` char '^' ≫ parseElements
-
 
 parseLogCfgTests ∷ TestTree
 parseLogCfgTests =
-  let test ∷ (IOClassSet,CSOpt) → Text → TestTree
+  let test ∷ (IOClassSet,CSOpt,ShowIOCs) → Text → TestTree
       test exp txt = testCase (unpack txt) $
         assertRight (@=? LogCfg exp) (parsec @_ @ParseError txt txt)
    in testGroup "parseCfgs"
-            [ test (ioClasses,NoCallStack) "{}"
-            , test (fromList [IOCmdW],NoCallStack) "{ioclass=iocmdw}"
-            , test (ioClasses,CallStackHead) "{csh}"
-            , test (fromList [IOWrite,IORead],CallStackHead)
+            [ test (ioClasses,NoCallStack,NoShowIOCs) "{}"
+            , test (fromList [IOCmdW],NoCallStack,NoShowIOCs) "{ioclass=iocmdw}"
+            , test (ioClasses,CallStackHead,NoShowIOCs) "{csh}"
+            , test (fromList [IOWrite,IORead],CallStackHead,NoShowIOCs)
                    "{CSH^iOcLaSsEs=ioread,iow}"
-            , test (fromList [IOWrite,IORead],CallStackHead)
-                   "{CSH^iOcLaSsEs=iow,ioread}"
+            , test (fromList [IOWrite,IORead],CallStackHead,DoShowIOCs)
+                   "{CSH^iOcLaSsEs=iow,ioread^show-IOCLASSES}"
             ]
 
 ----------------------------------------
@@ -265,24 +293,82 @@ parsecSeverity = try parsecSeverityN ∤ parsecSeverityS
 
 ----------------------------------------
 
-mkVerboseOptions ∷ Severity → Maybe(LogCfg, Maybe LogFile) → VerboseOptions
-mkVerboseOptions sev Nothing =
-  VerboseOptions sev ioClasses NoCallStack Nothing
-mkVerboseOptions sev (Just (unLogCfg → (iocs,cso),fn)) = 
-  VerboseOptions sev iocs cso fn
+mkVerboseOptions ∷ Severity → Maybe LogCfg → Maybe LogFile → VerboseOptions
+mkVerboseOptions sev Nothing fnY =
+  VerboseOptions sev ioClasses NoCallStack fnY NoShowIOCs
+mkVerboseOptions sev (Just (unLogCfg → (iocs,cso,siocs))) fnY =
+  VerboseOptions sev iocs cso fnY siocs
+
+mkVerboseOptionsFromSeverity ∷ Severity → VerboseOptions
+mkVerboseOptionsFromSeverity sev = mkVerboseOptions sev Nothing Nothing
 
 ----------------------------------------
 
 defSeverity ∷ Severity
 defSeverity = Notice
 
+{- | Parse a `severity:{options}:logfn` verbose arg. -}
+parseVO ∷ ∀ σ η . Stream σ Identity Char ⇒ Parsec σ η VerboseOptions
+parseVO = mkVerboseOptions ⊳ option defSeverity parsecSeverity ⋪ char ':'
+                           ⊵ optionMaybe parser                ⋪ char ':'
+                           ⊵ optionMaybe parser
+----------
+
+parseVOTests ∷ TestTree
+parseVOTests =
+  let test exp txt =
+        testCase (unpack txt) $
+          assertRight (exp ≟) (parse parseVO (unpack txt) txt)
+      testErr txt =
+        testCase (unpack txt) $
+          assertIsLeft (parse @_ @_ @VerboseOptions parseVO (unpack txt) txt)
+      tmplog = LogFile (FileA [absfile|/tmp/log|])
+      logtmp = LogFile (FileR [relfile|log:tmp|])
+   in testGroup "parseVO"
+            [ testErr "1"
+            , testErr ":"
+            , testErr "/foo"
+            , testErr "warn"
+            , test (VerboseOptions Warning ioClasses NoCallStack Nothing
+                                   NoShowIOCs)
+                   -- check case-random prefix of 'alert'
+                   "warn::"
+            , test (VerboseOptions Alert ioClasses NoCallStack (Just tmplog)
+                                   NoShowIOCs)
+                   -- check case-random prefix of 'alert'
+                   "aL::/tmp/log"
+            , test (VerboseOptions Alert (fromList [IOWrite]) NoCallStack
+                                   (Just logtmp) DoShowIOCs)
+                   "1:{ioclasses=iowrite^show-iocs}:log:tmp"
+            , testErr "1:deliberately!!bad:log:tmp"
+            , test (VerboseOptions defSeverity ioClasses NoCallStack
+                                   (Just tmplog) NoShowIOCs)
+                   "::/tmp/log"
+            , test (VerboseOptions defSeverity (fromList [IORead]) NoCallStack
+                                   (Just tmplog) NoShowIOCs)
+                   ":{IOCLASS=ioRead}:/tmp/log"
+            , test (VerboseOptions defSeverity (fromList [IOCmdW]) NoCallStack
+                                   Nothing DoShowIOCs)
+                   ":{ioclass=IOCMDW^show-ioclasses}:"
+            , test (VerboseOptions defSeverity (fromList [IOCmdW]) CallStackHead
+                                   Nothing NoShowIOCs)
+                   ":{cshead^ioclass=IOCMDW}:"
+            , -- we use 'stack' here to check for parser issues vs.
+              -- show-ioc{,lasses}s
+              test (VerboseOptions defSeverity (fromList [IOCmdW]) FullCallStack
+                                   Nothing DoShowIOCs)
+                   ":{ioclass=IOCMDW^Stack^show-iocs}:"
+            , test (VerboseOptions defSeverity ioClasses CallStackHead Nothing
+                                   NoShowIOCs)
+                   ":{cshead}:"
+            ]
+
+
+----------------------------------------
+
 parseVerboseOptions ∷ ∀ σ η . Stream σ Identity Char ⇒ Parsec σ η VerboseOptions
 parseVerboseOptions =
-  let colon = char ':'
-      betwixt p = between p p
-   in mkVerboseOptions ⊳ option defSeverity parsecSeverity
-                       ⊵ optionMaybe ((,) ⊳ (betwixt colon parser)
-                                          ⊵ optionMaybe parser)
+  try parseVO ∤ mkVerboseOptionsFromSeverity ⊳ (parsecSeverity ⋪ eof)
 
 ----------
 
@@ -297,32 +383,41 @@ parseVerboseOptionsTests =
       tmplog = LogFile (FileA [absfile|/tmp/log|])
       logtmp = LogFile (FileR [relfile|log:tmp|])
    in testGroup "parseVerboseOptions"
-            [ test (VerboseOptions Alert ioClasses NoCallStack Nothing) "1"
-            , test (VerboseOptions Alert ioClasses NoCallStack (Just tmplog))
+            [ test (VerboseOptions Alert ioClasses NoCallStack Nothing
+                                   NoShowIOCs)
+                   "1"
+            , testErr ":"
+            , testErr "/foo"
+            , test (VerboseOptions Alert ioClasses NoCallStack (Just tmplog)
+                                   NoShowIOCs)
                    -- check case-random prefix of 'alert'
                    "aL::/tmp/log"
-            , test (VerboseOptions Warning ioClasses NoCallStack Nothing)
+            , test (VerboseOptions Warning ioClasses NoCallStack Nothing
+                                   NoShowIOCs)
                    "warn"
             , test (VerboseOptions Alert (fromList [IOWrite]) NoCallStack
-                                   (Just logtmp))
-                   "1:{ioclasses=iowrite}:log:tmp"
+                                   (Just logtmp) DoShowIOCs)
+                   "1:{ioclasses=iowrite^show-iocs}:log:tmp"
             , testErr "1:deliberately!!bad:log:tmp"
             , test (VerboseOptions defSeverity ioClasses NoCallStack
-                                   (Just tmplog))
+                                   (Just tmplog) NoShowIOCs)
                    "::/tmp/log"
             , test (VerboseOptions defSeverity (fromList [IORead]) NoCallStack
-                                   (Just tmplog))
+                                   (Just tmplog) NoShowIOCs)
                    ":{IOCLASS=ioRead}:/tmp/log"
             , test (VerboseOptions defSeverity (fromList [IOCmdW]) NoCallStack
-                                   Nothing)
-                   ":{ioclass=IOCMDW}:"
+                                   Nothing DoShowIOCs)
+                   ":{ioclass=IOCMDW^show-ioclasses}:"
             , test (VerboseOptions defSeverity (fromList [IOCmdW]) CallStackHead
-                                   Nothing)
+                                   Nothing NoShowIOCs)
                    ":{cshead^ioclass=IOCMDW}:"
-            , test (VerboseOptions defSeverity (fromList [IOCmdW]) FullCallStack
-                                   Nothing)
-                   ":{ioclass=IOCMDW^CallStack}:"
-            , test (VerboseOptions defSeverity ioClasses CallStackHead Nothing)
+            , -- we use 'stack' here to check for parser issues vs.
+              -- show-ioc{,lasses}s
+              test (VerboseOptions defSeverity (fromList [IOCmdW]) FullCallStack
+                                   Nothing DoShowIOCs)
+                   ":{ioclass=IOCMDW^Stack^show-iocs}:"
+            , test (VerboseOptions defSeverity ioClasses CallStackHead Nothing
+                                   NoShowIOCs)
                    ":{cshead}:"
             ]
 
@@ -364,6 +459,14 @@ verboseDesc =
                                 ]
                               ]
 
+      show_iocs = fillSep $ ю [ [ toDocTs [ "Show the IOClass of each log event"
+                                          , "as a log prefix in braces."
+                                          , "This may be invoked with"
+                                          , "\"show-ioclasses\" or "
+                                          , "\"show-iocs\"."
+                                          ]
+                                ]
+                              ]
       example = text "info:{cshead^ioclasses=iocmdw,iocmdr}:/tmp/log"
 
    in toDoc $ [ toDoc [ "Detailed setting of verbosity."
@@ -387,8 +490,9 @@ verboseDesc =
                          , "settings, separated by a circumflex or high caret"
                          , "(^) character.  Available settings are: "
                          ]
-                 <$$> text "stack control " ⊞ align stackControl
-                 <$$> text "io classes    " ⊞ align ioclasses
+                 <$$> text "stack control  " ⊞ align stackControl
+                 <$$> text "io classes     " ⊞ align ioclasses
+                 <$$> text "show ioclasses " ⊞ align show_iocs
 
                , toDocTs [ "The file, if provided, will be opened for writing"
                          , "(rather than appending)." ]
@@ -407,7 +511,8 @@ verboseDesc =
 --------------------------------------------------------------------------------
 
 tests ∷ TestTree
-tests = testGroup "VerboseOptions" [ parseLogCfgTests,parseVerboseOptionsTests ]
+tests = testGroup "VerboseOptions" [ parseLogCfgTests, parseVOTests
+                                   , parseVerboseOptionsTests ]
 
 ----------------------------------------
 

@@ -19,10 +19,11 @@ import Data.Function           ( ($) )
 import Data.Maybe              ( Maybe( Just, Nothing ) )
 import Data.String             ( String, unwords, words )
 import System.IO               ( IO )
-import Text.Show               ( show )
+import Text.Show               ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
+import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
 import Data.Monoid.Unicode    ( (⊕) )
 import Data.Ord.Unicode       ( (≤) )
@@ -67,6 +68,7 @@ import MonadIO.File2  ( IOMode( WriteMode ), fileWritable, withFileT )
 import Data.MoreUnicode.Functor  ( (⊳) )
 import Data.MoreUnicode.Lens     ( (⊣) )
 import Data.MoreUnicode.Monad    ( (≫) )
+import Data.MoreUnicode.Monoid   ( ю )
 
 -- mtl ---------------------------------
 
@@ -82,7 +84,7 @@ import Natural  ( Natty, One, one, count )
 import Options.Applicative  ( Parser, footerDoc, progDesc )
 import Options.Applicative.Help.Pretty  ( Doc
                                         , (<+>)
-                                        , align, fillBreak, fillSep
+                                        , align, empty, fillBreak, fillSep
                                         , indent, string, text
                                         , vcat
                                         )
@@ -108,8 +110,10 @@ import StdMain.StdOptions      ( DryRunLevel, HasDryRunLevel( dryRunLevel )
                                , ifDryRun, options, parseStdOptions
                                )
 import StdMain.UsageError      ( AsUsageError, UsageIOError, throwUsage )
-import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
-                               , verboseDesc, verboseOptions )
+import StdMain.VerboseOptions  ( ShowIOCs( DoShowIOCs )
+                               , csopt, ioClassFilter, logFile, showIOCs
+                               , unLogFile, verboseDesc, verboseOptions
+                               )
 
 --------------------------------------------------------------------------------
 
@@ -118,7 +122,9 @@ import StdMain.VerboseOptions  ( csopt, ioClassFilter, logFile, unLogFile
 
 stdMain_ ∷ ∀ ε α σ ω ν μ .
            (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-            ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
+            ToExitCode σ, HasIOClass ω, HasDoMock ω,
+ Show α -- XXX
+           ) ⇒
            Natty ν
          → Text
          → Parser α
@@ -133,7 +139,7 @@ stdMain_ n desc p io = do
       optionDesc' name para =
         indent 2 (fillBreak 14 (string name) <+> align para)
       footerDesc ∷ Doc
-      footerDesc = vcat ([ string "Standard options:"
+      footerDesc = vcat ([ empty, string "Standard options:"
                          , optionDesc "-v" [ "Increase verbosity.  This may"
                                            , "be used up to 3 times (which is"
                                            , "equivalent to --debug); and is"
@@ -180,12 +186,13 @@ stdMain_ n desc p io = do
       prefixIOC ∷ ∀ α β . HasIOClass α ⇒ LogEntry α → PPDoc.Doc β
       prefixIOC le =
         PPDoc.braces (PPDoc.pretty ∘ toText $ le ⊣ attrs∘ioClass) ⊕ PPDoc.space
-      filters    = [
-        -- XXX ONLY IF SELECTED IN OPTIONS
-                     pure ∘ mapPrefixDoc prefixIOC
-                   , \ le → if le ⊣ severity ≤ sevOpt then [le] else []
-                   , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
-                   ]
+      filters    = ю [ if vopts ⊣ showIOCs ≡ DoShowIOCs
+                       then [ pure ∘ mapPrefixDoc prefixIOC ]
+                       else []
+                     , [ \ le → if le ⊣ severity ≤ sevOpt then [le] else []
+                       , logFilter (\ le → (le ⊣ attrs ∘ ioClass) ∈ ioClasses)
+                       ]
+                     ]
       logIOToFile i o' h = logToFile' renderers filters h (i o')
 
 
@@ -212,7 +219,8 @@ stdMain_ n desc p io = do
  -}
 stdMain ∷ ∀ ε α σ ω ν μ .
           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-           ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
+           ToExitCode σ, HasIOClass ω, HasDoMock ω, Show α -- XXX
+          ) ⇒
           Natty ν
         → Text
         → Parser α
@@ -225,7 +233,8 @@ type LogTIO ω ε = (LoggingT (Log ω) (ExceptT ε IO))
 
 stdMainx ∷ ∀ ε α σ ω ν μ .
           (MonadIO μ, Exception ε, Printable ε, AsUsageError ε, AsIOError ε,
-           ToExitCode σ, HasIOClass ω, HasDoMock ω) ⇒
+           ToExitCode σ, HasIOClass ω, HasDoMock ω, Show α -- XXX
+           ) ⇒
           Natty ν
         → Text
         → Parser α
@@ -243,7 +252,8 @@ stdMainx n desc p io =
      Note that although the `io` arg. is typed to a `ReaderT`, much simpler
      types - e.g., `MonadIO ⇒ μ ()`, or `MonadIO ⇒ μ ExitCode` - will suffice.
  -}
-stdMain' ∷ ∀ ρ σ μ . (MonadIO μ, ToExitCode σ) ⇒
+stdMain' ∷ ∀ ρ σ μ . (MonadIO μ, ToExitCode σ, Show ρ -- XXX
+                     ) ⇒
            Text
          → Parser ρ
          → (DoMock → ρ → ReaderT (DryRunLevel One) (LogTIO MockIOClass UsageIOError) σ)

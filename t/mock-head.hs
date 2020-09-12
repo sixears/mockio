@@ -15,6 +15,7 @@ import Data.Function           ( ($) )
 import Data.List               ( take )
 import Data.Maybe              ( Maybe( Just, Nothing ), maybe )
 import System.IO               ( Handle, IO, IOMode( WriteMode ), stdout )
+import Text.Show               ( Show )
 
 -- base-unicode-symbols ----------------
 
@@ -82,6 +83,7 @@ import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 data Options = Options { fileName  ∷ Text
                        , outputFile ∷ Maybe AbsFile
                        }
+  deriving Show
 
 parseOptions ∷ Parser Options
 parseOptions = Options ⊳ strArgument (metavar "FILE")
@@ -96,7 +98,7 @@ main ∷ IO ()
 main = -- XXX Tidy This Up
        -- add 'append' to log file options
        -- log rolling!
-       -- only dump footer with --help  or --longhelp?
+       -- :main /etc/group --verbose /tmp/log "works" (but does nothing)
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
 go ∷ (MonadLog (Log MockIOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒

@@ -16,7 +16,7 @@ import Data.Function.Unicode  ( (∘) )
 
 -- log-plus ----------------------------
 
-import Log.LogEntry       ( LogEntry, attrs )
+import Log.LogEntry       ( attrs )
 import Log.LogRenderOpts  ( LogR )
 
 -- more-unicode ------------------------
@@ -25,8 +25,8 @@ import Data.MoreUnicode.Lens  ( (⊣) )
 
 -- prettyprinter -----------------------
 
-import Data.Text.Prettyprint.Doc                  ( Doc, annotate )
-import Data.Text.Prettyprint.Doc.Render.Terminal  ( AnsiStyle, italicized )
+import Data.Text.Prettyprint.Doc                  ( annotate )
+import Data.Text.Prettyprint.Doc.Render.Terminal  ( italicized )
 
 ------------------------------------------------------------
 --                     local imports                      --

@@ -184,6 +184,7 @@ data StdOptions ν α = StdOptions { _nonBaseOptions ∷ α
                                  , _verboseOptions ∷ VerboseOptions
                                  , _dryRunLevel    ∷ DryRunLevel ν
                                  }
+  deriving Show
 
 instance HasDryRunLevel ν (StdOptions ν α) where
   dryRunLevel = lens _dryRunLevel (\ so drl → so { _dryRunLevel = drl })
@@ -213,7 +214,7 @@ parseStdOptions n p =
       flagq         = flagsev four (long "quiet" ⊕ internal)
                               pred
       flagd         = defVOpts ⊳ flag' Debug (long "debug" ⊕ internal)
-      verbose = parsecOption (long "verbose")
+      verbose       = parsecOption (long "verbose")
    in StdOptions ⊳ p
                  ⊵ (flagv ∤ flagq ∤ flagd ∤ verbose)
                  ⊵ dryRunP n

@@ -13,11 +13,11 @@ module OptParsePlus2
   )
 where
 
-import Prelude  ( error, fromIntegral )
+import Prelude  ( Int, error, fromIntegral )
 
 -- base --------------------------------
 
-import Control.Monad       ( return, when )
+import Control.Monad       ( return )
 import Data.Bifunctor      ( first )
 import Data.Eq             ( Eq )
 import Data.Foldable       ( Foldable, foldr, toList )
@@ -28,13 +28,15 @@ import Data.Maybe          ( Maybe( Just, Nothing ), fromMaybe )
 import Data.String         ( String )
 import Data.Typeable       ( Typeable )
 import Data.Word           ( Word8 )
-import System.Environment  ( getProgName )
+import System.Environment  ( getArgs, getProgName )
+import System.Exit         ( ExitCode( ExitSuccess ), exitSuccess, exitWith )
+import System.IO           ( IO, hPutStrLn, putStr, putStrLn, stderr )
 import Text.Show           ( Show( show ) )
 
 -- base-unicode-symbols ----------------
 
-import Data.Eq.Unicode        ( (≡) )
 import Data.Function.Unicode  ( (∘) )
+import Data.List.Unicode      ( (∈) )
 import Data.Monoid.Unicode    ( (⊕) )
 
 -- data-textual ------------------------
@@ -51,9 +53,8 @@ import Data.List.Extra  ( unsnoc )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Applicative  ( (⊵) )
-import Data.MoreUnicode.Functor2     ( (⊳), (⊳⊳) )
-import Data.MoreUnicode.Monad        ( (≫) )
+import Data.MoreUnicode.Functor2  ( (⊳), (⊳⊳) )
+import Data.MoreUnicode.Monad     ( (≫) )
 
 -- optparse-applicative ----------------
 
@@ -61,22 +62,24 @@ import Options.Applicative.Builder
                               ( ArgumentFields, HasCompleter, InfoMod, Mod
                               , OptionFields, ReadM
                               , argument, columns, completeWith, eitherReader
-                              , failureCode, flag, fullDesc, info, long, option
-                              , prefs, showHelpOnEmpty, showHelpOnError
+                              , failureCode, fullDesc, info, option, prefs
                               )
 import Options.Applicative.Extra
-                              ( ParserPrefs, customExecParser )
+                              ( ParserPrefs, execParserPure, renderFailure )
 import Options.Applicative.Help.Core
-                              ( parserHelp, parserUsage )
+                              ( footerHelp, headerHelp, parserHelp, parserUsage )
 import Options.Applicative.Help.Pretty
-                              ( Doc, (<+>), comma, dquotes, empty, fillSep
-                              , punctuate, space, text, vcat )
+                              ( Doc, (<+>), comma, displayS, dquotes, empty, fillSep
+                              , punctuate, renderPretty, space, text, vcat )
+
+
 import Options.Applicative.Types
-                              ( Parser )
+                              ( Parser, ParserInfo, ParserHelp, ParserResult( CompletionInvoked, Failure, Success ), execCompletion, infoFooter, infoHeader, infoParser )
+import Options.Applicative.Help.Types  ( renderHelp )
 
 -- monadio-plus ------------------------
 
-import MonadIO  ( MonadIO, liftIO, warn )
+import MonadIO  ( MonadIO, liftIO )
 
 -- more-unicode ------------------------
 
@@ -145,9 +148,9 @@ completePrintables = completeWith ∘ fmap toString ∘ toList
 ----------------------------------------
 
 {- | Standard parser preferences.  Input is terminal width. -}
-parserPrefs ∷ Maybe ℕ → ParserPrefs
-parserPrefs w = let width = (fromIntegral $ fromMaybe 80 w)
-                 in prefs $ showHelpOnError ⊕ showHelpOnEmpty ⊕ columns width
+parserPrefs ∷ ℕ → ParserPrefs
+parserPrefs width = let -- width = (fromIntegral $ fromMaybe 80 w)
+                     in prefs $ {- showHelpOnError ⊕ -} {- showHelpOnEmpty ⊕ -} columns (fromIntegral width)
 
 ----------------------------------------
 
@@ -168,12 +171,33 @@ data DoHelp = DoHelp | NoHelp
 
 --------------------
 
-data HelpWith α = HelpWith { _alpha ∷ α, _doHelp ∷ DoHelp }
+data HelpWith' α = DoHelp' | NoHelp' α
 
 --------------------
 
-parseHelpWith ∷ Parser α → Parser (HelpWith α)
-parseHelpWith f = HelpWith ⊳ f ⊵ flag NoHelp DoHelp (long "help")
+myExecParser' ∷ ParserPrefs → ParserInfo α → IO (HelpWith' α)
+myExecParser' pprefs pinfo = do
+  args ← getArgs
+  if "--help" ∈ args {- ∨ any ("--help=" `isPrefixOf`) args -}
+  then return DoHelp'
+  else NoHelp' ⊳ handleParseResult (execParserPure pprefs pinfo args)
+
+
+-- | Handle `ParserResult`.
+handleParseResult :: ParserResult a -> IO a
+handleParseResult (Success a) = return a
+handleParseResult (Failure failure) = do
+      progn <- getProgName
+      let (msg, exit) = renderFailure failure progn
+      case exit of
+        ExitSuccess -> putStrLn msg
+        _           -> hPutStrLn stderr msg
+      exitWith exit
+handleParseResult (CompletionInvoked compl) = do
+      progn <- getProgName
+      msg <- execCompletion compl progn
+      putStr msg
+      exitSuccess
 
 --------------------
 
@@ -185,26 +209,32 @@ parseHelpWith f = HelpWith ⊳ f ⊵ flag NoHelp DoHelp (long "help")
 parseOpts ∷ MonadIO μ ⇒ Maybe Text -- ^ program name (or uses `getProgName`)
                       -- | base infomod for parser; typically `progDesc
                       --   "some description"`
-                      → InfoMod (HelpWith α)
+--                      → InfoMod (HelpWith α)
+                      → InfoMod α
                       → Parser α   -- ^ proggie opts parser
                       → μ α
 parseOpts progn baseinfo prsr = liftIO $ do
-  width ← TerminalSize.width @ℕ ⊳⊳ TerminalSize.size
+  width ← fromMaybe 80 ⊳ (TerminalSize.width @Int ⊳⊳ TerminalSize.size)
   let infoMod = fullDesc ⊕ baseinfo ⊕ usageFailure
-      prsr'   = parseHelpWith prsr
-      pprefs  = parserPrefs width
-  opts ← customExecParser pprefs (info prsr' infoMod)
+      pprefs  = parserPrefs (fromIntegral width)
+      showHelp ∷ ParserHelp → IO()
+      showHelp = hPutStrLn stderr ∘ renderHelp width
+      showDoc  ∷ Doc → IO()
+      showDoc  = hPutStrLn stderr ∘ (`displayS` "") ∘ renderPretty 1.0 width
+  hopts  ← myExecParser' pprefs (info prsr infoMod)
   progn' ← flip fromMaybe progn ⊳ (pack ⊳ getProgName)
-  when (DoHelp ≡ _doHelp opts) $ do
-    let usage = parserUsage pprefs prsr (unpack progn')
-        help  = parserHelp  pprefs prsr
-    warn (show usage)
-    warn (show help)
-    -- Note that usage failures, including using --help in the 'wrong' place,
-    -- will result in a showHelpOnError failure; so we use the same exit code.
-    _ ← exitWith' usageFailureCode
-    return ()
-  return $ _alpha opts
+  case hopts of
+    NoHelp' opts → return opts
+    DoHelp' → do
+      let usage = parserUsage pprefs prsr (unpack progn')
+          i = info prsr infoMod
+      showDoc usage
+      showHelp $ headerHelp (infoHeader i)
+      showHelp $ parserHelp pprefs (infoParser i)
+      showHelp $ footerHelp (infoFooter i)
+      _ ← exitWith' usageFailureCode
+      error "unreachable code in parseOpts"
+
 
 ----------------------------------------
 
@@ -248,7 +278,7 @@ instance ToDoc [[Text]] where
   {- | Each text list is assembled into a flowing paragraph; each para is
        separated by a blank line. -}
   toDoc tss = vcat $ intersperse space (toDoc ⊳ tss)
-      
+
 instance ToDoc [Doc] where
   {- | Each doc is separated by a blank line. -}
   toDoc ds = vcat $ intersperse space ds
