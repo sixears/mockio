@@ -90,16 +90,8 @@ import Text.Fmt  ( fmt, fmtT )
 
 import MockIO.DoMock        ( DoMock( DoMock, NoMock ), HasDoMock( doMock ) )
 import MockIO.IOClass       ( HasIOClass( ioClass ), IOClass( IORead ) )
--- import MockIO.RenderDoMock  ( renderWithDoMockAnsi )
 
 --------------------------------------------------------------------------------
-
--- TODO:
--- add logIO' to carry arbitrary data; same for log & log'
--- tighten up naming; split out mocking & logging; terminal colouring
--- demo logging methods incl. stderr
--- clearer mock logging (e.g. (CMD) vs [CMD]); options handlers for logs
--- cmd logging using showcmdforuser
 
 _li0 ∷ (MonadIO μ, MonadLog (Log ()) μ) ⇒ μ Text
 _li0 = logIOT Informational "li0" ⪼ return "Godzilla"
@@ -139,6 +131,8 @@ mkIO' sv ioc lg mock_value io mck = do
   case mck of
     NoMock → liftIO io
     DoMock → liftIO mock_value
+
+--------------------
 
 {- | Mildly simplified `mkIO'`, specifically with a constant log message
      (that is surrounded in parens in case of DoMock); and a non-IO mock value.

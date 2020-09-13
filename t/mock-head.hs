@@ -9,7 +9,6 @@
 import qualified  System.IO
 
 import Control.Applicative     ( optional )
-import Control.Monad           ( return )
 import Control.Monad.IO.Class  ( MonadIO, liftIO )
 import Data.Function           ( ($) )
 import Data.List               ( take )
@@ -36,7 +35,7 @@ import Log  ( Log )
 
 -- logging-effect ----------------------
 
-import Control.Monad.Log  ( MonadLog, Severity( Informational, Warning ) )
+import Control.Monad.Log  ( MonadLog, Severity( Informational, Notice ) )
 
 -- mtl ---------------------------------
 
@@ -73,7 +72,7 @@ import Text.Fmt  ( fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO          ( DoMock( DoMock, NoMock ), MockIOClass, mkIO, mkIO' )
+import MockIO          ( DoMock( NoMock ), MockIOClass, mkIO )
 import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 --------------------------------------------------------------------------------
@@ -98,7 +97,9 @@ main ∷ IO ()
 main = -- XXX Tidy This Up
        -- add 'append' to log file options
        -- log rolling!
-       -- :main /etc/group --verbose /tmp/log "works" (but does nothing)
+       -- add Logging to withFile
+       -- cmd logging using showcmdforuser
+
        stdMain' "simple 'head' re-implementation to test MockIO" parseOptions go
 
 go ∷ (MonadLog (Log MockIOClass) μ, MonadIO μ, MonadError ε μ, AsUsageError ε) ⇒
@@ -111,16 +112,15 @@ go mck opts = do
 withFile ∷ MonadIO μ ⇒ AbsFile → IOMode → (Handle → IO ω) → μ ω
 withFile fn mode = liftIO ∘ System.IO.withFile (toString fn) mode
 
+{- | With a file opened for writing, or `stdout` if no file provided. -}
 withWriteFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒
                 DoMock → α → Maybe AbsFile → (Handle → IO α) → μ α
 withWriteFile mck a fn io = do
-  let fname         = maybe "-STDOUT-" toText fn
-      logmsg DoMock = [fmtT|(write %t)|] fname
-      logmsg NoMock = [fmtT|write %t|]   fname
+  let fname  = maybe "-STDOUT-" toText fn
+      logmsg = [fmtT|write %t|] fname
   case fn of
     Nothing  → liftIO $ io stdout
-    Just wfn → 
-        mkIO' Warning IOWrite logmsg (return a) (withFile wfn WriteMode io) mck
+    Just wfn → mkIO Notice IOWrite logmsg a (withFile wfn WriteMode io) mck
 
 writeFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒
             DoMock → Maybe AbsFile → Text → μ ()
