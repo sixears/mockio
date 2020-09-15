@@ -6,11 +6,11 @@
 module ParsecPlus2
   ( AsParseError(..), Parsecable(..), ParseError
   , parsecFUTF8, parsecFUTF8L, parsecFileUTF8L, parsecFileUTF8
-  , module ParsecPlusBase2
+  , module ParsecPlusBase
   )
 where
 
-import ParsecPlusBase2
+import ParsecPlusBase
 
 -- fpath -------------------------------
 

@@ -53,8 +53,8 @@ import Data.List.Extra  ( unsnoc )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Functor2  ( (⊳), (⊳⊳) )
-import Data.MoreUnicode.Monad     ( (≫) )
+import Data.MoreUnicode.Functor  ( (⊳), (⊳⊳) )
+import Data.MoreUnicode.Monad    ( (≫) )
 
 -- optparse-applicative ----------------
 

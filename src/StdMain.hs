@@ -34,8 +34,8 @@ import Data.Textual  ( Printable, toString, toText )
 
 -- exited ------------------------------
 
-import qualified  Exited2  as  Exited
-import Exited2  ( ToExitCode )
+import qualified  Exited  as  Exited
+import Exited  ( ToExitCode )
 
 -- log-plus ----------------------------
 

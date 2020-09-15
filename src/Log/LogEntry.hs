@@ -65,7 +65,7 @@ import qualified  Text.Printer  as  P
 
 -- tfmt --------------------------------
 
-import Text.Fmt2  ( fmt )
+import Text.Fmt  ( fmt )
 
 -- time --------------------------------
 

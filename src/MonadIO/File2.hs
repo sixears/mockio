@@ -72,14 +72,14 @@ import Control.Lens.Review  ( review )
 
 -- monadio-error -----------------------
 
-import MonadError            ( ѥ )
-import MonadError.IO2        ( asIOError, asIOErrorY )
-import MonadError.IO.Error2  ( AsIOError, IOError, squashInappropriateTypeT )
+import MonadError           ( ѥ )
+import MonadError.IO        ( asIOError, asIOErrorY )
+import MonadError.IO.Error  ( AsIOError, IOError, squashInappropriateTypeT )
 
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Bool     ( 𝔹 )
-import Data.MoreUnicode.Functor2  ( (⊳), (⊳⊳⊳), (⩺) )
+import Data.MoreUnicode.Functor  ( (⊳), (⊳⊳⊳), (⩺) )
 import Data.MoreUnicode.Lens     ( (⊣), (⫥) )
 import Data.MoreUnicode.Monad    ( (≫) )
 import Data.MoreUnicode.Natural  ( ℕ )

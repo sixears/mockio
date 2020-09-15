@@ -51,7 +51,7 @@ import Data.Text  ( Text )
 
 -- tfmt --------------------------------
 
-import Text.Fmt2  ( formatUTCYDoW, fmt )
+import Text.Fmt  ( formatUTCYDoW, fmt )
 
 ------------------------------------------------------------
 --                     local imports                      --
