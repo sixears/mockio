@@ -67,8 +67,7 @@ import Test.Tasty.HUnit  ( assertBool, testCase )
 -- tasty-plus --------------------------
 
 import TastyPlus         ( (≟), runTestsP, runTestsReplay
-                         , runTestTree,withResource' )
-import TastyPlus2        ( withResource2' )
+                         , runTestTree,withResource', withResource2' )
 import TastyPlus.Equish  ( Equish( (≃) ) )
 
 -- text --------------------------------

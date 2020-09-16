@@ -150,8 +150,8 @@ import Test.Tasty  ( TestTree, testGroup )
 
 -- tasty-plus --------------------------
 
-import TastyPlus         ( runTestsP, runTestsReplay, runTestTree )
-import TastyPlus2        ( assertListEq, assertListEqIO )
+import TastyPlus         ( assertListEq, assertListEqIO
+                         , runTestsP, runTestsReplay, runTestTree )
 import TastyPlus.Equish  ( Equish( (≃) ) )
 
 -- terminal-size -----------------------

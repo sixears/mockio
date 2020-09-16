@@ -92,8 +92,7 @@ import Test.Tasty.HUnit  ( testCase )
 
 -- tasty-plus --------------------------
 
-import TastyPlus   ( (≟), runTestsP, runTestsReplay, runTestTree )
-import TastyPlus2  ( assertListEq )
+import TastyPlus  ( (≟), assertListEq, runTestsP, runTestsReplay, runTestTree )
 
 -- text --------------------------------
 

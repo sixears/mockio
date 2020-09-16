@@ -72,7 +72,7 @@ import MockIO.IOClass  ( IOClass( IOCmdW, IORead, IOWrite ), IOClassSet
 
 -- monaderror-io -----------------------
 
-import MonadError2  ( mErrFail )
+import MonadError  ( mErrFail )
 
 -- more-unicode ------------------------
 
