@@ -60,10 +60,11 @@ import Data.Textual  ( toString )
 
 import FPath.AbsDir       ( absdir )
 import FPath.AbsFile      ( absfile )
-import FPath.AsFilePath2  ( AsFilePath( filepath ), exterminate )
+import FPath.AsFilePath   ( AsFilePath( filepath ) )
+import FPath.AsFilePath'  ( exterminate )
 import FPath.DirLike      ( IsDir )
-import FPath.File2        ( File )
-import FPath.FileLike2    ( IsFile )
+import FPath.File         ( File )
+import FPath.FileLike     ( IsFile )
 import FPath.Parent       ( parent )
 
 -- lens --------------------------------

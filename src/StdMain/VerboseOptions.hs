@@ -47,7 +47,7 @@ import Data.Textual  ( Printable( print ) )
 -- fpath -------------------------------
 
 import FPath.AbsFile    ( absfile )
-import FPath.File2      ( File( FileA, FileR ) )
+import FPath.File       ( File( FileA, FileR ) )
 import FPath.Parseable  ( parse' )
 import FPath.RelFile    ( relfile )
 
