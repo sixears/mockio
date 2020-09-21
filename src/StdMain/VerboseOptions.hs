@@ -89,8 +89,8 @@ import Options.Applicative.Help.Pretty  ( Doc, (<$$>), align, comma, fillSep
 
 -- optparse-plus --------------------------------
 
-import OptParsePlus2  ( (⊞), finalFullStop, listDQOr, listDQSlash, listW, toDoc
-                      , toDocT, toDocTs )
+import OptParsePlus  ( (⊞), finalFullStop, listDQOr, listDQSlash, listW, toDoc
+                     , toDocT, toDocTs )
 
 -- parsec -----------------------------
 
@@ -100,8 +100,8 @@ import Text.Parsec.Prim        ( Parsec, ParsecT, Stream, parse, try )
 
 -- parsec-plus -------------------------
 
-import ParsecPlus2  ( Parsecable( parsec, parser ), ParseError
-                    , caseInsensitiveString, uniquePrefix )
+import ParsecPlus  ( Parsecable( parsec, parser ), ParseError
+                   , caseInsensitiveString, uniquePrefix )
 
 -- parser-plus -------------------------
 

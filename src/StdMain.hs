@@ -61,7 +61,7 @@ import MonadError.IO.Error  ( AsIOError )
 
 -- monadio-plus ------------------------
 
-import MonadIO.File2  ( IOMode( WriteMode ), fileWritable, withFileT )
+import MonadIO.File  ( IOMode( WriteMode ), fileWritable, withFileT )
 
 -- more-unicode ------------------------
 
@@ -91,7 +91,7 @@ import Options.Applicative.Help.Pretty  ( Doc
 
 -- optparse-plus -----------------------
 
-import OptParsePlus2  ( parseOpts )
+import OptParsePlus  ( parseOpts )
 
 -- prettyprinter -----------------------
 

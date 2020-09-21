@@ -61,8 +61,8 @@ import Text.Parsec.Combinator  ( sepBy )
 
 -- parsec-plus -------------------------
 
-import ParsecPlus2  ( Parsecable( parsec, parser ), ParseError
-                    , caseInsensitiveString )
+import ParsecPlus  ( Parsecable( parsec, parser ), ParseError
+                   , caseInsensitiveString )
 
 -- parser-plus -------------------------
 

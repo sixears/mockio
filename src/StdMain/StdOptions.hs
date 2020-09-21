@@ -66,7 +66,7 @@ import Options.Applicative  ( FlagFields, Mod, Parser
 
 -- optparse-plus -------------------------
 
-import OptParsePlus2  ( parsecOption )
+import OptParsePlus  ( parsecOption )
 
 -- tfmt --------------------------------
 

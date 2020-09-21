@@ -72,7 +72,7 @@ import Text.Fmt  ( fmtT )
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO          ( DoMock( NoMock ), MockIOClass, mkIO )
+import MockIO          ( DoMock( NoMock ), MockIOClass, mkIOL )
 import MockIO.IOClass  ( IOClass( IORead, IOWrite ) )
 
 --------------------------------------------------------------------------------
@@ -120,7 +120,7 @@ withWriteFile mck a fn io = do
       logmsg = [fmtT|write %t|] fname
   case fn of
     Nothing  → liftIO $ io stdout
-    Just wfn → mkIO Notice IOWrite logmsg a (withFile wfn WriteMode io) mck
+    Just wfn → mkIOL Notice IOWrite logmsg a (withFile wfn WriteMode io) mck
 
 writeFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒
             DoMock → Maybe AbsFile → Text → μ ()
@@ -129,6 +129,6 @@ writeFile mck fnY txt = withWriteFile mck () fnY (\ h → hPutStr h txt)
 readFile ∷ (MonadIO μ, MonadLog (Log MockIOClass) μ) ⇒ Text → μ Text
 readFile fn = let logmsg = [fmtT|read %t|] fn
                   result = Data.Text.IO.readFile (unpack fn)
-               in mkIO Informational IORead logmsg "" result NoMock
+               in mkIOL Informational IORead logmsg "" result NoMock
 
 -- that's all, folks! ----------------------------------------------------------
