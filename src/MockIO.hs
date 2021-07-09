@@ -1,8 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE UnicodeSyntax     #-}
-
 module MockIO
   ( DoMock(..), HasDoMock( doMock ), mkIO, mkIO', mkIO'ME, mkIOME, tests )
 where
