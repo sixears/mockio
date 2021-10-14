@@ -1,3 +1,7 @@
+0.0.4.1 2021-10-13
+==================
+- upgrade dependencies
+
 0.0.4.0 2021-07-09
 ==================
 - add NFData instance of DoMock
