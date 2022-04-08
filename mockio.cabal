@@ -3,7 +3,7 @@ name:                mockio
 -- PVP summary:      +-+------- breaking API changes
 --                   | | +----- non-breaking API additions
 --                   | | | +--- code changes with no API change
-version:             0.0.4.1
+version:             0.0.4.4
 synopsis:            Mock IO actions (e.g., for dry-runs)
 description:         Mock IO actions (e.g., for dry-runs)
 cabal-version:       >= 1.10
@@ -25,10 +25,10 @@ library
                     , UnicodeSyntax
   build-depends:      base, deepseq, lens, mtl, tasty, tasty-hunit, text
 
-                    , monaderror-io >= 1.2.0.0
-                    , monadio-plus  >= 2.0.0.0
+                    , monaderror-io >= 1.2.2.0
+                    , monadio-plus  >= 2.3.0.1
                     , more-unicode  >= 0.0.16.0
-                    , tasty-plus    >= 1.5.1.0
+                    , tasty-plus    >= 1.5.1.1
   hs-source-dirs:      src
   default-language:    Haskell2010
 
