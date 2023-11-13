@@ -6,13 +6,14 @@ module MockIO
   , mkIO'
   , mkIO'ME
   , mkIOME
+  , noMock
   , tests
   ) where
 
 -- base --------------------------------
 
 import Control.Monad ( join, return )
-import Data.Function ( ($) )
+import Data.Function ( flip, ($) )
 import Data.String   ( String )
 import System.Exit   ( ExitCode )
 import System.IO     ( IO )
@@ -33,7 +34,7 @@ import Data.MoreUnicode.Natural ( ℕ )
 -- mtl -----------------------
 
 import Control.Monad.Except ( ExceptT, MonadError )
-import Control.Monad.Reader ( ReaderT )
+import Control.Monad.Reader ( ReaderT, runReaderT )
 
 -- tasty -------------------------------
 
