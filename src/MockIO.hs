@@ -1,55 +1,63 @@
+{-# LANGUAGE UnicodeSyntax #-}
 module MockIO
-  ( DoMock(..), HasDoMock( doMock ), mkIO, mkIO', mkIO'ME, mkIOME, tests )
-where
+  ( DoMock(..)
+  , HasDoMock(doMock)
+  , mkIO
+  , mkIO'
+  , mkIO'ME
+  , mkIOME
+  , tests
+  ) where
 
 -- base --------------------------------
 
-import Control.Monad  ( join, return )
-import Data.Function  ( ($) )
-import Data.String    ( String )
-import System.Exit    ( ExitCode )
-import System.IO      ( IO )
+import Control.Monad ( join, return )
+import Data.Function ( ($) )
+import Data.String   ( String )
+import System.Exit   ( ExitCode )
+import System.IO     ( IO )
 
 -- monaderror-io -----------------------
 
-import MonadError  ( ѥ )
+import MonadError ( ѥ )
 
 -- monadio-plus ------------------------
 
-import MonadIO  ( MonadIO, liftIO )
+import MonadIO ( MonadIO, liftIO )
 
 -- more-unicode ------------------------
 
-import Data.MoreUnicode.Monad    ( (≫) )
-import Data.MoreUnicode.Natural  ( ℕ )
+import Data.MoreUnicode.Monad   ( (≫) )
+import Data.MoreUnicode.Natural ( ℕ )
 
 -- mtl -----------------------
 
-import Control.Monad.Except  ( ExceptT, MonadError )
+import Control.Monad.Except ( ExceptT, MonadError )
+import Control.Monad.Reader ( ReaderT )
 
 -- tasty -------------------------------
 
-import Test.Tasty  ( TestTree, testGroup )
+import Test.Tasty ( TestTree, testGroup )
 
 -- tasty-hunit -------------------------
 
-import Test.Tasty.HUnit  ( testCase )
+import Test.Tasty.HUnit ( testCase )
 
 -- tasty-plus --------------------------
 
-import TastyPlus  ( (≟), runTestsP, runTestsReplay, runTestTree, withResource'
-                  , withResource2' )
+import TastyPlus ( runTestTree, runTestsP, runTestsReplay, withResource',
+                   withResource2', (≟) )
 
 -- text --------------------------------
 
-import Data.Text     ( Text )
-import Data.Text.IO  ( readFile )
+import Data.Text    ( Text )
+import Data.Text.IO ( readFile )
 
 ------------------------------------------------------------
 --                     local imports                      --
 ------------------------------------------------------------
 
-import MockIO.DoMock  ( DoMock( DoMock, NoMock ), HasDoMock( doMock ) )
+import MockIO.DoMock ( DoMock(DoMock, NoMock), HasDoMock(doMock) )
 
 --------------------------------------------------------------------------------
 
@@ -76,6 +84,8 @@ mkIO' mock_value _  DoMock = liftIO mock_value
 mkIO ∷ ∀ μ α . MonadIO μ ⇒ α → IO α → DoMock → μ α
 mkIO mock_value io mck = mkIO' (return mock_value) io mck
 
+----------------------------------------
+
 
 {- | mkIO', for `ExceptT` IO values. -}
 mkIO'ME ∷ ∀ μ ε α .
@@ -90,9 +100,17 @@ mkIO'ME ∷ ∀ μ ε α .
 mkIO'ME _          io NoMock = join (ѥ io)
 mkIO'ME mock_value _  DoMock = join (ѥ mock_value)
 
+----------------------------------------
+
 {- | Mildly simplified `mkIO'ME`, specifically taking a non-IO mock value. -}
 mkIOME ∷ ∀ μ ε α . MonadError ε μ ⇒ α → ExceptT ε μ α → DoMock → μ α
 mkIOME mock_value io mck = mkIO'ME (return mock_value) io mck
+
+----------------------------------------
+
+{-| run in a reader context with a constant NoMock value -}
+noMock ∷ ∀ η α . ReaderT DoMock η α → η α
+noMock = flip runReaderT NoMock
 
 --------------------------------------------------------------------------------
 --                                   tests                                    --
