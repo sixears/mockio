@@ -1,4 +1,6 @@
 {-# LANGUAGE UnicodeSyntax #-}
+{-| functions for mocking IO actions -}
+
 module MockIO
   ( DoMock(..)
   , HasDoMock(doMock)
@@ -88,17 +90,17 @@ mkIO mock_value io mck = mkIO' (return mock_value) io mck
 
 ----------------------------------------
 
-{- | mkIO', for `ExceptT` IO values.  Takes a `handle` argument, which can
+{- | mkIO', for `ExceptT` IO values.  Takes a handle argument, which can
      be used to review / amend the return value. -}
-mkIO'ME' ∷ ∀ μ ε α . MonadError ε μ ⇒
-          (μ α → μ α)   -- ^ a handler; can amend the result, or maybe make
+mkIO'ME' ∷ ∀ μ ε α β . MonadError ε μ ⇒
+          (μ α → μ β)   -- ^ a handler; can amend the result, or maybe make
                         --   some IO (e.g., logging)
         → ExceptT ε μ α -- ^ mock value; IO is available here so that, e.g., in
                         -- ^ case of mock a file open, /dev/null is opened
                         -- ^ instead
         → ExceptT ε μ α -- ^ the IO to perform when not mocked
         → DoMock        -- ^ whether to mock
-        → μ α
+        → μ β
 
 mkIO'ME' handle mock_value io mck =
   ѥ (case mck of NoMock → io; DoMock → mock_value) ≫ handle
@@ -164,6 +166,7 @@ readFnMockTests =
 
 ----------------------------------------
 
+{- | unit tests -}
 tests ∷ TestTree
 tests = testGroup "MockIO" [ readFnTests, readFnMockTests ]
 
