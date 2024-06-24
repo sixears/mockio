@@ -5,6 +5,7 @@ module MockIO
   , mkIO
   , mkIO'
   , mkIO'ME
+  , mkIO'ME'
   , mkIOME
   , noMock
   , tests
@@ -12,8 +13,8 @@ module MockIO
 
 -- base --------------------------------
 
-import Control.Monad ( join, return )
-import Data.Function ( flip, ($) )
+import Control.Monad ( return )
+import Data.Function ( flip, id, ($) )
 import Data.String   ( String )
 import System.Exit   ( ExitCode )
 import System.IO     ( IO )
@@ -87,6 +88,22 @@ mkIO mock_value io mck = mkIO' (return mock_value) io mck
 
 ----------------------------------------
 
+{- | mkIO', for `ExceptT` IO values.  Takes a `handle` argument, which can
+     be used to review / amend the return value. -}
+mkIO'ME' ∷ ∀ μ ε α . MonadError ε μ ⇒
+          (μ α → μ α)   -- ^ a handler; can amend the result, or maybe make
+                        --   some IO (e.g., logging)
+        → ExceptT ε μ α -- ^ mock value; IO is available here so that, e.g., in
+                        -- ^ case of mock a file open, /dev/null is opened
+                        -- ^ instead
+        → ExceptT ε μ α -- ^ the IO to perform when not mocked
+        → DoMock        -- ^ whether to mock
+        → μ α
+
+mkIO'ME' handle mock_value io mck =
+  ѥ (case mck of NoMock → io; DoMock → mock_value) ≫ handle
+
+----------------------------------------
 
 {- | mkIO', for `ExceptT` IO values. -}
 mkIO'ME ∷ ∀ μ ε α .
@@ -98,8 +115,11 @@ mkIO'ME ∷ ∀ μ ε α .
         → DoMock        -- ^ whether to mock
         → μ α
 
+{-
 mkIO'ME _          io NoMock = join (ѥ io)
 mkIO'ME mock_value _  DoMock = join (ѥ mock_value)
+-}
+mkIO'ME = mkIO'ME' id
 
 ----------------------------------------
 
