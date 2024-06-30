@@ -16,7 +16,7 @@ module MockIO
 -- base --------------------------------
 
 import Control.Monad ( return )
-import Data.Function ( flip, ($) )
+import Data.Function ( flip, id, ($) )
 import Data.String   ( String )
 import System.Exit   ( ExitCode )
 import System.IO     ( IO )
@@ -32,13 +32,12 @@ import MonadIO ( MonadIO, liftIO )
 -- more-unicode ------------------------
 
 import Data.MoreUnicode.Either  ( 𝔼, pattern 𝕷, pattern 𝕽 )
-import Data.MoreUnicode.Functor ( (⊳) )
 import Data.MoreUnicode.Monad   ( (≫) )
 import Data.MoreUnicode.Natural ( ℕ )
 
 -- mtl -----------------------
 
-import Control.Monad.Except ( ExceptT, MonadError, throwError )
+import Control.Monad.Except ( ExceptT, MonadError, runExceptT, throwError )
 import Control.Monad.Reader ( ReaderT, runReaderT )
 
 -- tasty -------------------------------
@@ -96,18 +95,18 @@ mkIO mock_value io mck = mkIO' (return mock_value) io mck
      be used to review / amend the return value. -}
 
 mkIO'ME' ∷ ∀ η η' ε α β . (MonadError ε η, MonadError ε η') ⇒
-          (η' α → η (𝔼 ε β)) -- ^ a handler; can amend the result, or maybe make
-                             --   some IO (e.g., logging)
-        → ExceptT ε η α      -- ^ mock value; IO is available here so that,
-                             --   e.g., in case of mock a file open, /dev/null
-                             --   is opened instead
-        → ExceptT ε η α      -- ^ the IO to perform when not mocked
-        → DoMock             -- ^ whether to mock
+          (η' (𝔼 ε α) → η (𝔼 ε β)) -- ^ a handler; can amend the result, or
+                                   --   maybe make some IO (e.g., logging)
+        → ExceptT ε η α            -- ^ mock value; IO is available here so
+                                   --   that, e.g., in case of mock a file open,
+                                   -- /dev/null is opened instead
+        → ExceptT ε η α            -- ^ the IO to perform when not mocked
+        → DoMock                   -- ^ whether to mock
         → η β
 
 mkIO'ME' handle mock_value io mck = do
   io' ← ѥ $ case mck of NoMock → io; DoMock → mock_value
-  handle io' ≫ \ case 𝕷 e → throwError e; 𝕽 r → return r
+  handle (runExceptT io') ≫ \ case 𝕷 e → throwError e; 𝕽 r → return r
 
 ----------------------------------------
 
@@ -120,7 +119,8 @@ mkIO'ME ∷ ∀ η ε α . MonadError ε η ⇒
         → DoMock        -- ^ whether to mock
         → η α
 
-mkIO'ME = mkIO'ME' (𝕽 ⊳) -- return -- id
+-- mkIO'ME = mkIO'ME' (𝕽 ⊳) -- return -- id
+mkIO'ME = mkIO'ME' id
 
 ----------------------------------------
 
